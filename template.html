@@ -1,7 +1,11 @@
 <title>Stars and Bars</title>
 <!--
   learn skill: topic page template.
-  One file per topic. Inline style and script only (artifact CSP). Copy, replace the content, keep the structure.
+  One file per topic. Inline style and script only, so it works opened from disk and under a hosting sandbox.
+  Copy, replace the content, keep the structure.
+  Two tiers, detected at runtime: hosted (a host database exists, answers sync across devices) or
+  local (localStorage only; a "Copy answers" button is added after each lesson's .done so the learner
+  can paste them to the tutor).
   Structure the script depends on:
     #app[data-topic]            slug used as the local storage key
     main > section              one per lesson or reference page; section.lesson for lessons
@@ -12,6 +16,7 @@
       text: textarea + .save
     .feedback                   written by the tutor after grading; remove `hidden` to show
     .score                      filled by the script for drills
+    .done                       end-of-lesson line; on the local tier the export control is inserted after it
 -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
@@ -161,6 +166,10 @@
   .feedback .kind { color: var(--muted); }
   .score { font: 13px var(--mono); color: var(--muted); margin: 8px 0 0; }
   .done { margin-top: 30px; padding: 12px 14px; border: 1px dashed var(--rule); border-radius: 6px; color: var(--muted); font-size: .95rem; }
+  .export { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .export button.check { font-size: 14px; padding: 8px 14px; }
+  .export .note { font: 12px var(--mono); color: var(--muted); }
+  .export textarea { width: 100%; min-height: 72px; font: 12px var(--mono); }
   .pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; font-size: .95rem; }
   .pager a { color: var(--accent); text-decoration: none; }
   .pager a:hover { text-decoration: underline; }
@@ -203,7 +212,7 @@
   <nav class="side" id="side" aria-label="Lessons">
     <span class="eyebrow">Learn</span>
     <span class="topic">Stars and Bars</span>
-    <span class="meta">C960 · counting · guide 4.9 and 4.10</span>
+    <span class="meta">counting · study guide 4.9 and 4.10</span>
     <div class="progress"><span class="bar"><i style="width: 50%"></i></span><span>2 of 4 passed</span></div>
 
     <div class="group">Lessons</div>
@@ -446,8 +455,8 @@
         <li><b>One page per topic.</b> Lessons are listed in the sidebar in order. A filled dot is passed, a ringed dot is the one to do now, grey is planned.</li>
         <li><b>Picture first.</b> Read the picture before the words. The caption points at the one thing to look at.</li>
         <li><b>Two kinds of lesson.</b> A concept lesson ends with questions you answer in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
-        <li><b>Your answers save as you type.</b> They sync across your devices when the page runs on claude.ai. The bottom of the sidebar says which.</li>
-        <li><b>When you finish a lesson, say <code>done</code> in the terminal.</b> Feedback appears under each question, the next lesson unlocks, and the vault note gets the record.</li>
+        <li><b>Your answers save as you type.</b> When the page is hosted by a tool that can store them, they sync across your devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which.</li>
+        <li><b>When you finish a lesson, say <code>done</code> in the terminal.</b> On a local page, press <b>Copy answers</b> first and paste them with <code>done</code>. Feedback appears under each question, the next lesson unlocks, and the vault note gets the record.</li>
         <li><b>Other words the terminal understands:</b> <code>stuck</code> (more help now), <code>too easy</code> or <code>too hard</code> (change the help level), <code>just tell me</code> (get the answer), <code>next</code> (move on).</li>
         <li><b>Help level.</b> Each lesson shows one: 3 worked example, 2 outline, 1 bare, 0 you define the check. Two clean lessons in a row moves it down. Getting stuck moves it up.</li>
         <li><b>When you are wrong,</b> the tutor first works out why. A wrong mental model gets a picture of where your answer parts from reality and one question. A slip gets a finger pointed at the step. An edge case gets the failing input. You get the answer whenever you ask for it.</li>
@@ -507,13 +516,14 @@
   menu.addEventListener('click', function () { side.classList.contains('open') ? closeMenu() : openMenu(); });
   backdrop.addEventListener('click', closeMenu);
 
-  /* ---------- answer store: claude db when available, else this device ---------- */
+  /* ---------- answer store: host db when available (hosted tier), else localStorage (local tier) ---------- */
   var storeReady = (function () {
     var key = 'learn:' + topic;
     function readLocal() { try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch (e) { return {}; } }
     function writeLocal(obj) { try { localStorage.setItem(key, JSON.stringify(obj)); } catch (e) {} }
     var cache = readLocal();
     var db = null;
+    /* host database hook. Claude artifacts expose window.claude.use('db'); add other hosts here. null = local tier. */
     var p = (window.claude && typeof window.claude.use === 'function') ? window.claude.use('db') : Promise.resolve(null);
     return p.catch(function () { return null; }).then(function (d) {
       db = d;
@@ -656,12 +666,44 @@
     if (kind === 'mc') bindMC(q); else if (kind === 'num') bindNum(q); else bindText(q);
   });
 
+  /* ---------- export: local tier hands a lesson's answers to the tutor as JSON ---------- */
+  function exportJSON(section, st) {
+    var out = { topic: topic, lesson: section.id, exported: new Date().toISOString(), answers: [] };
+    Array.prototype.forEach.call(section.querySelectorAll('.q'), function (q) {
+      var id = q.getAttribute('data-q');
+      out.answers.push(st.get(id) || { lesson: section.id, q: id, kind: q.getAttribute('data-kind'), value: null });
+    });
+    return JSON.stringify(out);
+  }
+  function addExport(section, st) {
+    var done = section.querySelector('.done');
+    if (!done) return;
+    var box = document.createElement('div');
+    box.className = 'export';
+    box.innerHTML = '<button class="check" type="button">Copy answers</button><span class="note">then paste them in the terminal with <b>done</b></span>';
+    done.parentNode.insertBefore(box, done.nextSibling);
+    var btn = box.querySelector('button'), note = box.querySelector('.note');
+    function fallback(text) {
+      var ta = box.querySelector('textarea');
+      if (!ta) { ta = document.createElement('textarea'); ta.readOnly = true; box.appendChild(ta); }
+      ta.value = text; ta.focus(); ta.select();
+      note.textContent = 'copy this block, then paste it in the terminal with done';
+    }
+    btn.addEventListener('click', function () {
+      var text = exportJSON(section, st);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { note.textContent = 'copied. Paste it in the terminal with done'; }, function () { fallback(text); });
+      } else fallback(text);
+    });
+  }
+
   /* ---------- hydrate once the store is ready ---------- */
   storeReady.then(function (st) {
     questions.forEach(function (q) { if (q._hydrate) q._hydrate(st.get(q.getAttribute('data-q'))); });
     sections.forEach(updateScore);
+    if (!st.synced) sections.forEach(function (s) { if (s.classList.contains('lesson')) addExport(s, st); });
     var sync = document.getElementById('sync');
-    if (sync) sync.textContent = st.synced ? 'answers: synced across devices' : 'answers: this device only';
+    if (sync) sync.textContent = st.synced ? 'answers: synced across devices' : 'answers: this device only, copy them at the end of each lesson';
   });
 })();
 </script>

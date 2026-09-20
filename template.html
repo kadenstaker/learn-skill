@@ -1,22 +1,27 @@
-<title>Stars and Bars</title>
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic title</title>
 <!--
-  learn skill: topic page template.
-  One file per topic. Inline style and script only, so it works opened from disk and under a hosting sandbox.
-  Copy, replace the content, keep the structure.
-  Two tiers, detected at runtime: hosted (a host database exists, answers sync across devices) or
-  local (localStorage only; a "Copy answers" button is added after each lesson's .done so the learner
-  can paste them to the tutor).
-  Structure the script depends on:
-    #app[data-topic]            slug used as the local storage key
-    main > section              one per lesson or reference page; section.lesson for lessons
-    nav.side a[href="#id"]      one link per existing section; planned lessons are <span> not <a>
-    .q[data-q][data-kind]       a question; data-q = "<lesson id>-q<n>"; kind = text | mc | num
-      mc:  .q[data-answer=key] > button.opt[data-key][data-why]
-      num: .q[data-answer="35|35.0"][data-why][data-hint] > input + button + .fb
+  learn skill: topic page template. One file per topic, inline style and script only.
+  Copy it, replace every [bracketed] placeholder, delete the sample sections you are not writing yet.
+
+  What the tutor edits:
+    <title>, .topic (twice), .meta          topic name and source line
+    nav.side a.item[href="#lNN"]            the full lesson plan, one link per lesson, written once at topic start
+    main > section.lesson                   one per written lesson: data-type="probe|concept|drill",
+                                            data-status="active|passed", data-help="0..3", optional data-note="redo q2"
+    .q[data-q="<lesson>-q<n>"][data-kind]   a question; kind = text | mc | num
+      mc:  .q[data-answer=key] > .opts > button.opt[data-key][data-why]
+      num: .q[data-answer="35|35.0|7/2"][data-why][data-hint] > .row > input + button.check, then .fb
       text: textarea + .save
-    .feedback                   written by the tutor after grading; remove `hidden` to show
-    .score                      filled by the script for drills
-    .done                       end-of-lesson line; on the local tier the export control is inserted after it
+    .feedback[hidden]                       under every question; the tutor fills it after grading and removes hidden
+    section#cheat                           passed rules only
+
+  What the script derives, so the tutor never edits it:
+    the strip at the top of each lesson (number, type, help level, note), sidebar dots and status,
+    the progress bar, prev/next links, sidebar links for lessons that have no section yet (shown as planned),
+    the answer store (host database when one is exposed, else localStorage) and the Copy answers button.
 -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
@@ -113,6 +118,7 @@
   /* lesson */
   .strip { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 12px var(--mono); color: var(--muted); margin-bottom: 14px; }
   .strip b { color: var(--ink); font-weight: 600; }
+  .strip .note { color: var(--warn); }
   h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 18px; text-wrap: balance; font-weight: 700; }
   h2 { font-size: 1.25rem; margin: 34px 0 10px; font-weight: 600; }
   p { margin: 0 0 12px; max-width: 38rem; }
@@ -164,6 +170,10 @@
   .save { display: block; margin-top: 6px; font: 12px var(--mono); color: var(--muted); min-height: 1em; }
   .feedback { margin-top: 14px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: .97rem; }
   .feedback .kind { color: var(--muted); }
+  .feedback[hidden] { display: none; }
+  .feedback svg { display: block; width: 100%; height: auto; margin: 10px 0; }
+  pre { font: .88em var(--mono); background: var(--panel); padding: 10px 12px; border-radius: 6px; overflow-x: auto; max-width: 38rem; }
+  pre code { background: none; padding: 0; }
   .score { font: 13px var(--mono); color: var(--muted); margin: 8px 0 0; }
   .done { margin-top: 30px; padding: 12px 14px; border: 1px dashed var(--rule); border-radius: 6px; color: var(--muted); font-size: .95rem; }
   .export { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
@@ -173,10 +183,6 @@
   .pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; font-size: .95rem; }
   .pager a { color: var(--accent); text-decoration: none; }
   .pager a:hover { text-decoration: underline; }
-  dl { margin: 0; }
-  dt { font-weight: 600; margin-top: 14px; }
-  dd { margin: 2px 0 0; color: var(--ink); max-width: 38rem; }
-  dd .avoid { color: var(--muted); font-size: .9rem; }
   ul { padding-left: 1.2em; max-width: 38rem; }
   li { margin-bottom: 8px; }
 
@@ -202,28 +208,28 @@
   }
 </style>
 
-<div class="app" id="app" data-topic="stars-and-bars">
+<div class="app" id="app" data-topic="topic-slug">
   <header class="top">
     <button class="menu" id="menu" type="button" aria-controls="side" aria-expanded="false">Lessons</button>
-    <span class="topic">Stars and Bars</span>
+    <span class="topic">Topic title</span>
   </header>
   <div class="backdrop" id="backdrop" hidden></div>
 
   <nav class="side" id="side" aria-label="Lessons">
     <span class="eyebrow">Learn</span>
-    <span class="topic">Stars and Bars</span>
-    <span class="meta">counting · study guide 4.9 and 4.10</span>
-    <div class="progress"><span class="bar"><i style="width: 50%"></i></span><span>2 of 4 passed</span></div>
+    <span class="topic">Topic title</span>
+    <span class="meta">[course or field] · [source, section]</span>
+    <div class="progress" id="progress"><span class="bar"><i></i></span><span></span></div>
 
     <div class="group">Lessons</div>
-    <a class="item" href="#l00" data-status="passed"><i class="dot"></i>0 · Where you're at</a>
-    <a class="item" href="#l01" data-status="passed"><i class="dot"></i>1 · Bars make bins</a>
-    <a class="item" href="#l02" data-status="active"><i class="dot"></i>2 · Pick the formula</a>
-    <span class="item" data-status="planned"><i class="dot"></i>3 · At least one each</span>
+    <!-- The whole plan, in order. A link whose section does not exist yet is shown as planned. -->
+    <a class="item" href="#l00"><i class="dot"></i>0 · Where you're at</a>
+    <a class="item" href="#l01"><i class="dot"></i>1 · [concept title]</a>
+    <a class="item" href="#l02"><i class="dot"></i>2 · [drill title]</a>
+    <a class="item" href="#l03"><i class="dot"></i>3 · [concept title]</a>
 
     <div class="group">Reference</div>
     <a class="item" href="#cheat">Cheat sheet</a>
-    <a class="item" href="#glossary">Glossary</a>
     <a class="item" href="#how">How this works</a>
 
     <div class="sync" id="sync">answers: checking sync</div>
@@ -231,186 +237,114 @@
 
   <main>
 
-    <!-- ============ Lesson 0: probe (passed, with feedback) ============ -->
-    <section id="l00" class="lesson" data-type="probe" data-status="passed" data-help="2">
-      <header class="strip"><span><b>Lesson 0</b> of 4</span><span>where you're at</span><span>help: outline</span></header>
+    <!-- ============ Lesson 0: probe. Two or three short questions on the prerequisites. ============ -->
+    <section id="l00" class="lesson" data-type="probe" data-status="active" data-help="2">
+      <header class="strip"></header>
       <h1>Where you're at</h1>
-      <p>Two quick questions on what stars and bars stands on. Wrong or blank answers are useful. They set where lesson 1 starts.</p>
+      <p>[One or two sentences. Wrong or blank answers are useful: they set where lesson 1 starts.]</p>
 
-      <div class="q" data-q="l00-q1" data-kind="num" data-answer="36" data-why="9 slots, pick the 2 that get a mark: C(9,2) = 36." data-hint="Choosing 2 of 9, order does not matter.">
+      <div class="q" data-q="l00-q1" data-kind="num" data-answer="[36|36.0]" data-why="[why, shown when correct]" data-hint="[hint, shown when wrong]">
         <span class="kind">compute</span>
-        <p class="prompt">A row has 9 empty slots. You will mark exactly 2 of them. How many different ways can you pick which 2?</p>
-        <div class="row"><input class="num" id="l00-q1" type="text" inputmode="numeric" autocomplete="off"><button class="check" type="button">Check</button></div>
+        <p class="prompt">[A question with a single numeric answer. Fractions and decimals both work.]</p>
+        <div class="row"><input class="num" id="l00-q1" type="text" autocomplete="off"><button class="check" type="button">Check</button></div>
         <div class="fb"></div>
-        <div class="feedback"><span class="kind">feedback · </span>You wrote 36 first try and named it C(9,2). That is the whole engine of lesson 1.</div>
+        <div class="feedback" hidden></div>
       </div>
 
       <div class="q" data-q="l00-q2" data-kind="text">
         <span class="kind">explain</span>
-        <p class="prompt">When is it right to <b>multiply</b> choices together to count something? Give one example where multiplying works and one where it does not.</p>
+        <p class="prompt">[A question answered in the learner's own words.]</p>
         <textarea id="l00-q2" rows="4"></textarea>
         <span class="save"></span>
-        <div class="feedback"><span class="kind">feedback · </span>Your example that works, "3 shirts and 2 pants is 6 outfits", is right: each shirt pairs with every pants. Your example that fails, "10 candies to 4 kids is 10 x 4", is exactly the trap: identical candies have no slots to fill, so there is nothing to multiply. Lesson 1 replaces that with a picture that does have slots.</div>
+        <div class="feedback" hidden></div>
       </div>
 
       <p class="done">Answered both? Say <b>done</b> in the terminal.</p>
       <nav class="pager"></nav>
     </section>
 
-    <!-- ============ Lesson 1: concept (passed, with feedback) ============ -->
-    <section id="l01" class="lesson" data-type="concept" data-status="passed" data-help="2">
-      <header class="strip"><span><b>Lesson 1</b> of 4</span><span>concept</span><span>builds on: lesson 0</span><span>unlocks: lesson 2</span><span>help: outline</span></header>
-      <h1>Bars make bins</h1>
+    <!-- ============ Sample concept lesson: picture, under 120 words, 2 to 4 interview questions. ============ -->
+    <section id="l01" class="lesson" data-type="concept" data-status="active" data-help="2">
+      <header class="strip"></header>
+      <h1>[Concept title]</h1>
 
       <figure class="anchor">
-        <svg viewBox="0 0 640 240" role="img" aria-label="Seven stars and two bars in nine slots, shown as two different handouts of seven candies to kids A, B, and C">
-          <g class="lbl">
-            <text x="62" y="18">1</text><text x="126" y="18">2</text><text x="190" y="18">3</text><text x="254" y="18">4</text><text x="318" y="18">5</text><text x="382" y="18">6</text><text x="446" y="18">7</text><text x="510" y="18">8</text><text x="574" y="18">9</text>
-          </g>
-          <g class="star">
-            <text x="62" y="82">★</text><text x="126" y="82">★</text><text x="254" y="82">★</text><text x="318" y="82">★</text><text x="382" y="82">★</text><text x="510" y="82">★</text><text x="574" y="82">★</text>
-          </g>
-          <rect class="bar-mark" x="187" y="44" width="6" height="52" rx="2"></rect>
-          <rect class="bar-mark" x="443" y="44" width="6" height="52" rx="2"></rect>
-          <g class="grp"><line x1="34" y1="104" x2="154" y2="104"></line><line x1="226" y1="104" x2="410" y2="104"></line><line x1="482" y1="104" x2="602" y2="104"></line></g>
-          <g class="lbl"><text x="94" y="124">A gets 2</text><text x="318" y="124">B gets 3</text><text x="542" y="124">C gets 2</text></g>
-
-          <g class="star">
-            <text x="126" y="187">★</text><text x="190" y="187">★</text><text x="254" y="187">★</text><text x="318" y="187">★</text><text x="382" y="187">★</text><text x="446" y="187">★</text><text x="510" y="187">★</text>
-          </g>
-          <rect class="bar-mark" x="59" y="149" width="6" height="52" rx="2"></rect>
-          <rect class="bar-mark" x="571" y="149" width="6" height="52" rx="2"></rect>
-          <g class="lbl"><text x="62" y="228">A: 0</text><text x="318" y="228">B gets 7</text><text x="574" y="228">C: 0</text></g>
+        <!-- Inline SVG drawn with this lesson's real numbers. Use the CSS tokens (var(--accent), var(--ink), var(--muted), var(--rule), var(--bad)) so it reads in both themes. -->
+        <svg viewBox="0 0 640 200" role="img" aria-label="[what the picture shows]">
+          <rect x="20" y="40" width="600" height="120" rx="8" fill="none" stroke="var(--rule)" stroke-width="2"></rect>
+          <text x="320" y="106" text-anchor="middle" fill="var(--muted)" font-family="var(--mono)" font-size="14">[picture]</text>
         </svg>
-        <figcaption>Look at the bars. Each row is 7 candies and 2 walls in 9 slots. Move a wall and a different kid gets the candy.</figcaption>
+        <figcaption>[One sentence that points at one feature of the picture.]</figcaption>
       </figure>
 
-      <p>7 identical candies to 3 kids. The candies have no names, so "candy 1 goes to A" means nothing. What does have a name is a <b>slot</b>: a row of 9 slots, 7 hold a star (a candy) and 2 hold a bar (a wall between kids).</p>
-      <p>Every way to place the 2 bars is one handout. So count the ways to pick which 2 of the 9 slots are bars: C(9,2) = 36.</p>
-      <p>General rule: <b>n</b> identical items into <b>k</b> different bins, empty bins allowed, is C(n + k - 1, k - 1). The n + k - 1 is the slots, the k - 1 is the bars. Guide 4.9.</p>
+      <p>[Under 120 words in total. Simple words, one idea per sentence, define a term at first use, cite the source section.]</p>
 
       <div class="q" data-q="l01-q1" data-kind="text">
         <span class="kind">explain</span>
-        <p class="prompt">In your own words: why does placing 2 bars among 7 stars count the handouts? What does one bar stand for?</p>
+        <p class="prompt">[Explain it back in your own words.]</p>
         <textarea id="l01-q1" rows="4"></textarea>
         <span class="save"></span>
-        <div class="feedback"><span class="kind">feedback · </span>"A bar is the line between one kid's pile and the next" is exactly it. One thing to sharpen: you said 2 bars because there are 2 gaps between 3 kids. That is the reason, and it generalizes: k kids always need k - 1 walls.</div>
+        <div class="feedback" hidden></div>
       </div>
 
       <div class="q" data-q="l01-q2" data-kind="text">
         <span class="kind">predict</span>
-        <p class="prompt">9 identical candies, 4 kids, any kid may get zero. How many stars, how many bars, how many slots? Write the count as C(_, _) and compute it.</p>
+        <p class="prompt">[Predict or apply, with the lesson's numbers changed.]</p>
         <textarea id="l01-q2" rows="4"></textarea>
         <span class="save"></span>
-        <div class="feedback"><span class="kind">feedback · </span>9 stars, 3 bars, 12 slots, C(12,3) = 220. Correct, and you wrote the slots before the formula, which is the habit that stops slips.</div>
+        <div class="feedback" hidden></div>
       </div>
 
       <div class="q" data-q="l01-q3" data-kind="text">
         <span class="kind">break it</span>
-        <p class="prompt">A classmate says 7 candies to 3 kids is 3<sup>7</sup>, "because each candy picks a kid." Name what 3<sup>7</sup> counts that we do not want. Give one concrete pair of outcomes it counts as different that are really the same.</p>
+        <p class="prompt">[A wrong claim to break: name what it gets wrong and give one concrete case.]</p>
         <textarea id="l01-q3" rows="4"></textarea>
         <span class="save"></span>
-        <div class="feedback"><span class="kind">feedback · </span>Right: 3<sup>7</sup> treats the candies as different, so "candy 1 to A, candy 2 to B" and "candy 2 to A, candy 1 to B" count twice, but both are "A gets one, B gets one." Log this one: distinct items means k<sup>n</sup>, identical items means stars and bars. Guide 4.10 has the 2x2 table.</div>
+        <div class="feedback" hidden></div>
       </div>
 
       <p class="done">Answered all three? Say <b>done</b> in the terminal. Stuck? Say <b>stuck</b>.</p>
       <nav class="pager"></nav>
     </section>
 
-    <!-- ============ Lesson 2: drill (active) ============ -->
+    <!-- ============ Sample drill: picture or worked table, then 8 to 12 auto-checked items. ============ -->
     <section id="l02" class="lesson" data-type="drill" data-status="active" data-help="2">
-      <header class="strip"><span><b>Lesson 2</b> of 4</span><span>drill</span><span>builds on: lesson 1</span><span>unlocks: lesson 3</span><span>help: outline</span></header>
-      <h1>Pick the formula</h1>
-      <p>Read the problem, write n and k, count slots and bars, then compute. The first two items are from lesson 1.</p>
+      <header class="strip"></header>
+      <h1>[Drill title]</h1>
+      <p>[One line on how to work each item. The first one or two items retrieve the previous lesson.]</p>
 
       <div class="tbl">
         <table>
-          <thead><tr><th>problem</th><th>n</th><th>k</th><th>slots</th><th>bars</th><th>what happened</th><th>count</th></tr></thead>
+          <thead><tr><th>problem</th><th>[step]</th><th>[step]</th><th>what happened</th><th>count</th></tr></thead>
           <tbody>
-            <tr><td>5 donuts from 4 types</td><td class="n">5</td><td class="n">4</td><td class="n">8</td><td class="n">3</td><td>types are the bins, donuts are stars</td><td class="n">C(8,3) = 56</td></tr>
-            <tr><td>x1 + x2 + x3 + x4 = 10, each xi at least 0</td><td class="n">10</td><td class="n">4</td><td class="n">13</td><td class="n">3</td><td>variables are the bins, units are stars</td><td class="n">C(13,3) = 286</td></tr>
+            <tr><td>[worked example from the source]</td><td class="n">[n]</td><td class="n">[k]</td><td>[what happened]</td><td class="n">[result]</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="score" id="score-l02"></p>
+      <p class="score"></p>
 
-      <div class="q" data-q="l02-q1" data-kind="num" data-answer="36" data-why="7 stars, 2 bars, 9 slots. C(9,2) = 36." data-hint="Count the slots first. Then pick the bar positions.">
+      <div class="q" data-q="l02-q1" data-kind="num" data-answer="[36]" data-why="[why]" data-hint="[hint]">
         <span class="kind">compute · from lesson 1</span>
-        <p class="prompt">7 identical candies to 3 kids, any kid may get zero. How many handouts?</p>
-        <div class="row"><input class="num" id="l02-q1" type="text" inputmode="numeric" autocomplete="off"><button class="check" type="button">Check</button></div>
+        <p class="prompt">[Item]</p>
+        <div class="row"><input class="num" id="l02-q1" type="text" autocomplete="off"><button class="check" type="button">Check</button></div>
         <div class="fb"></div>
+        <div class="feedback" hidden></div>
       </div>
 
       <div class="q" data-q="l02-q2" data-kind="mc" data-answer="c">
-        <span class="kind">choose · from lesson 1</span>
-        <p class="prompt">In the picture, what does one bar stand for?</p>
-        <div class="opts">
-          <button class="opt" type="button" data-key="a" data-why="Stars are the candies, not bars."><span class="key">a</span>one candy in the pile</button>
-          <button class="opt" type="button" data-key="b" data-why="Kids are the gaps between bars, not the bars."><span class="key">b</span>one kid in the group</button>
-          <button class="opt" type="button" data-key="c" data-why="A wall between two kids' piles. k kids need k - 1 walls."><span class="key">c</span>a wall between kids</button>
-          <button class="opt" type="button" data-key="d" data-why="A kid with zero shows up as two bars touching, not as a bar."><span class="key">d</span>a kid who gets zero</button>
-        </div>
-        <div class="fb"></div>
-      </div>
-
-      <div class="q" data-q="l02-q3" data-kind="num" data-answer="286" data-why="n = 10, k = 4, slots 13, bars 3. C(13,3) = 286." data-hint="Slots = n + k - 1. Bars = k - 1.">
-        <span class="kind">compute</span>
-        <p class="prompt">10 identical candies to 4 kids, any kid may get zero. How many handouts?</p>
-        <div class="row"><input class="num" id="l02-q3" type="text" inputmode="numeric" autocomplete="off"><button class="check" type="button">Check</button></div>
-        <div class="fb"></div>
-      </div>
-
-      <div class="q" data-q="l02-q4" data-kind="mc" data-answer="a">
         <span class="kind">choose</span>
-        <p class="prompt">12 identical balls into 5 different boxes, empty boxes allowed. Which expression counts it?</p>
+        <p class="prompt">[Item with four options of similar length.]</p>
         <div class="opts">
-          <button class="opt" type="button" data-key="a" data-why="12 stars, 4 bars, 16 slots. C(16,4) = 1820."><span class="key">a</span>C(16, 4)</button>
-          <button class="opt" type="button" data-key="b" data-why="That chooses 5 of the 12 balls. Balls are identical, so there is nothing to choose among them."><span class="key">b</span>C(12, 5)</button>
-          <button class="opt" type="button" data-key="c" data-why="That is distinct balls each picking a box. These balls are identical."><span class="key">c</span>5 ^ 12</button>
-          <button class="opt" type="button" data-key="d" data-why="Slots are n + k - 1 = 16, not 17, and you choose bars, k - 1 = 4."><span class="key">d</span>C(17, 5)</button>
+          <button class="opt" type="button" data-key="a" data-why="[why this is wrong]"><span class="key">a</span>[option]</button>
+          <button class="opt" type="button" data-key="b" data-why="[why this is wrong]"><span class="key">b</span>[option]</button>
+          <button class="opt" type="button" data-key="c" data-why="[why this is right]"><span class="key">c</span>[option]</button>
+          <button class="opt" type="button" data-key="d" data-why="[why this is wrong]"><span class="key">d</span>[option]</button>
         </div>
         <div class="fb"></div>
+        <div class="feedback" hidden></div>
       </div>
 
-      <div class="q" data-q="l02-q5" data-kind="num" data-answer="45" data-why="8 units into 3 variables: 10 slots, 2 bars. C(10,2) = 45." data-hint="Same picture. Variables are the bins, units are the stars.">
-        <span class="kind">compute</span>
-        <p class="prompt">How many solutions does x1 + x2 + x3 = 8 have, if each xi is an integer 0 or more?</p>
-        <div class="row"><input class="num" id="l02-q5" type="text" inputmode="numeric" autocomplete="off"><button class="check" type="button">Check</button></div>
-        <div class="fb"></div>
-      </div>
-
-      <div class="q" data-q="l02-q6" data-kind="mc" data-answer="b">
-        <span class="kind">choose</span>
-        <p class="prompt">Which one is <b>not</b> a stars and bars problem?</p>
-        <div class="opts">
-          <button class="opt" type="button" data-key="a" data-why="Identical coins, distinct kids. Stars and bars."><span class="key">a</span>8 identical coins to 3 kids</button>
-          <button class="opt" type="button" data-key="b" data-why="Distinct books: each book picks a kid, so it is 3^8. This is the lesson 1 trap."><span class="key">b</span>8 distinct books to 3 kids</button>
-          <button class="opt" type="button" data-key="c" data-why="Units are identical, variables are distinct bins. Stars and bars."><span class="key">c</span>a + b + c = 8, each 0 or more</button>
-          <button class="opt" type="button" data-key="d" data-why="Identical balls, distinct bins. Stars and bars."><span class="key">d</span>8 identical balls into 3 bins</button>
-        </div>
-        <div class="fb"></div>
-      </div>
-
-      <div class="q" data-q="l02-q7" data-kind="num" data-answer="6" data-why="5 stars, 1 bar, 6 slots. C(6,1) = 6. Or list them: A gets 0 through 5." data-hint="Two kids means one bar.">
-        <span class="kind">compute</span>
-        <p class="prompt">5 identical candies to 2 kids, either may get zero. How many handouts?</p>
-        <div class="row"><input class="num" id="l02-q7" type="text" inputmode="numeric" autocomplete="off"><button class="check" type="button">Check</button></div>
-        <div class="fb"></div>
-      </div>
-
-      <div class="q" data-q="l02-q8" data-kind="mc" data-answer="a">
-        <span class="kind">choose</span>
-        <p class="prompt">20 identical pencils to 4 students, any student may get zero. Which expression counts it?</p>
-        <div class="opts">
-          <button class="opt" type="button" data-key="a" data-why="20 stars, 3 bars, 23 slots. C(23,3) = 1771."><span class="key">a</span>C(23, 3)</button>
-          <button class="opt" type="button" data-key="b" data-why="Slots are 23, and you choose the 3 bars, not 4."><span class="key">b</span>C(24, 4)</button>
-          <button class="opt" type="button" data-key="c" data-why="That chooses 4 of 20 pencils. Pencils are identical."><span class="key">c</span>C(20, 4)</button>
-          <button class="opt" type="button" data-key="d" data-why="That is distinct pencils each picking a student."><span class="key">d</span>4 ^ 20</button>
-        </div>
-        <div class="fb"></div>
-      </div>
-
-      <p class="done">All eight checked? Say <b>done</b> in the terminal. The tutor reads your attempts, not just the final score.</p>
+      <p class="done">All checked? Say <b>done</b> in the terminal. The tutor reads your attempts, not just the score.</p>
       <nav class="pager"></nav>
     </section>
 
@@ -418,33 +352,7 @@
     <section id="cheat">
       <header class="strip"><span>reference</span><span>only what you have passed</span></header>
       <h1>Cheat sheet</h1>
-      <h2>Identical items into different bins, empty allowed</h2>
-      <p>n items, k bins. Slots = n + k - 1. Bars = k - 1. Count = <b>C(n + k - 1, k - 1)</b>.</p>
-      <div class="tbl">
-        <table>
-          <thead><tr><th>step</th><th>what happened</th></tr></thead>
-          <tbody>
-            <tr><td class="n">1</td><td>Are the items identical and the bins different? If items are distinct, it is k<sup>n</sup> instead.</td></tr>
-            <tr><td class="n">2</td><td>n = items, k = bins.</td></tr>
-            <tr><td class="n">3</td><td>Slots = n + k - 1. Bars = k - 1.</td></tr>
-            <tr><td class="n">4</td><td>C(slots, bars).</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <nav class="pager"></nav>
-    </section>
-
-    <section id="glossary">
-      <header class="strip"><span>reference</span><span>terms you have used correctly</span></header>
-      <h1>Glossary</h1>
-      <dl>
-        <dt>stars and bars</dt>
-        <dd>A picture for handing out n identical items to k different bins: n stars and k - 1 bars in a row. Each arrangement is one handout. <span class="avoid">Avoid: combinations with repetition, multiset formula. Same thing, more words.</span></dd>
-        <dt>bin</dt>
-        <dd>A place that receives items and has its own identity: a kid, a box, a variable in a sum. Bins are always distinct in this topic.</dd>
-        <dt>identical items</dt>
-        <dd>Items you cannot tell apart, so swapping two of them is not a new outcome. Candies, coins, units of a sum. <span class="avoid">Opposite: distinct items, which give k<sup>n</sup>.</span></dd>
-      </dl>
+      <p>Nothing yet. Rules land here as you pass lessons.</p>
       <nav class="pager"></nav>
     </section>
 
@@ -452,7 +360,7 @@
       <header class="strip"><span>reference</span></header>
       <h1>How this works</h1>
       <ul>
-        <li><b>One page per topic.</b> Lessons are listed in the sidebar in order. A filled dot is passed, a ringed dot is the one to do now, grey is planned.</li>
+        <li><b>One page per topic.</b> Lessons are listed in the sidebar in order. A filled dot is passed, a ringed dot is the one to do now, grey is not written yet.</li>
         <li><b>Picture first.</b> Read the picture before the words. The caption points at the one thing to look at.</li>
         <li><b>Two kinds of lesson.</b> A concept lesson ends with questions you answer in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
         <li><b>Your answers save as you type.</b> When the page is hosted by a tool that can store them, they sync across your devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which.</li>
@@ -460,7 +368,7 @@
         <li><b>Other words the terminal understands:</b> <code>stuck</code> (more help now), <code>too easy</code> or <code>too hard</code> (change the help level), <code>just tell me</code> (get the answer), <code>next</code> (move on).</li>
         <li><b>Help level.</b> Each lesson shows one: 3 worked example, 2 outline, 1 bare, 0 you define the check. Two clean lessons in a row moves it down. Getting stuck moves it up.</li>
         <li><b>When you are wrong,</b> the tutor first works out why. A wrong mental model gets a picture of where your answer parts from reality and one question. A slip gets a finger pointed at the step. An edge case gets the failing input. You get the answer whenever you ask for it.</li>
-        <li><b>Cheat sheet and glossary</b> grow as you pass lessons. They hold only things you have already used correctly.</li>
+        <li><b>The cheat sheet</b> grows as you pass lessons. It holds only rules you have already used correctly.</li>
       </ul>
       <nav class="pager"></nav>
     </section>
@@ -473,10 +381,42 @@
   var app = document.getElementById('app');
   var topic = app.getAttribute('data-topic') || 'topic';
   var sections = Array.prototype.slice.call(document.querySelectorAll('main > section'));
-  var links = Array.prototype.slice.call(document.querySelectorAll('.side a.item'));
   var side = document.getElementById('side');
   var menu = document.getElementById('menu');
   var backdrop = document.getElementById('backdrop');
+
+  /* ---------- chrome derived from the sections: sidebar status, strips, progress ---------- */
+  var HELP = { '3': 'worked example', '2': 'outline', '1': 'bare', '0': 'your check' };
+  var TYPE = { probe: "where you're at", concept: 'concept', drill: 'drill' };
+  var lessonItems = Array.prototype.slice.call(side.querySelectorAll('.item[href^="#l"]'));
+  var passed = 0;
+  lessonItems.forEach(function (a, i) {
+    var sec = document.getElementById(a.getAttribute('href').slice(1));
+    if (!sec) {
+      var span = document.createElement('span');
+      span.className = 'item'; span.setAttribute('data-status', 'planned'); span.innerHTML = a.innerHTML;
+      a.parentNode.replaceChild(span, a);
+      return;
+    }
+    var status = sec.getAttribute('data-status') || 'active';
+    a.setAttribute('data-status', status);
+    if (status === 'passed') passed += 1;
+    var strip = sec.querySelector('.strip');
+    if (strip && !strip.children.length) {
+      var parts = ['<span><b>Lesson ' + i + '</b> of ' + lessonItems.length + '</span>',
+                   '<span>' + (TYPE[sec.getAttribute('data-type')] || sec.getAttribute('data-type') || '') + '</span>',
+                   '<span>help: ' + (HELP[sec.getAttribute('data-help')] || sec.getAttribute('data-help') || '') + '</span>'];
+      if (status === 'passed') parts.push('<span>passed</span>');
+      if (sec.getAttribute('data-note')) parts.push('<span class="note">' + sec.getAttribute('data-note') + '</span>');
+      strip.innerHTML = parts.join('');
+    }
+  });
+  var progress = document.getElementById('progress');
+  if (progress) {
+    progress.querySelector('.bar i').style.width = Math.round(100 * passed / Math.max(1, lessonItems.length)) + '%';
+    progress.querySelector('span:last-child').textContent = passed + ' of ' + lessonItems.length + ' passed';
+  }
+  var links = Array.prototype.slice.call(side.querySelectorAll('a.item'));
 
   /* ---------- router: one section at a time ---------- */
   function titleOf(s) { var h = s.querySelector('h1'); return h ? h.textContent : s.id; }

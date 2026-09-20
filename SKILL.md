@@ -15,62 +15,57 @@ Wants: picture first, few words, simple terms, no mannered prose, plain dashes (
 
 ## The loop
 
-Learner: opens the page, reads the picture, does the questions, then says one word in the terminal: `done`, `stuck`, `too easy`, `too hard`, `just tell me`, or `next`. On the local tier (see Hosting) `done` comes with the pasted answers.
+Learner: opens the page, reads the picture, does the questions, then says one word in the terminal: `done`, `stuck`, `too easy`, `too hard`, `just tell me`, or `next`. `done` comes with the answers pasted from the page's **Copy answers** button (or, on a hosted page, you read them from its database).
 
-You: grade, write feedback under each question, unlock the next lesson, update the vault note, republish. The terminal is the control channel. Everything readable goes on the page. Terminal replies are one or two lines.
+You: grade, write feedback under each question, write the next lesson, update the vault note, save. The terminal is the control channel and gets one line. Everything readable goes on the page.
 
 ## Files
 
 ```
-~/Learning/<topic-slug>/index.html      the topic page, one file; source of truth on disk. Hosted tier: also published at a URL
-~/Learning/<topic-slug>/sandbox/        code topics only: NN-<slug>/ with a runnable check
-~/Obsidian Vault/.../<Topic>.md         the record: goal, source, lessons, misconceptions, graded answers, page link or path
+~/Learning/<topic-slug>/index.html      the topic page, one file, source of truth
+~/Learning/<topic-slug>/sandbox/        code topics only: NN-<slug>/ with a stub to fill in and check.py (prints one line per case, ends PASS or FAIL, exit 0 or 1)
+~/Obsidian Vault/.../<Topic>.md         the record: goal, source, lessons, misconceptions, page path
 ```
 
-Nothing else. No notes file, no resources file, no learning records. Preferences live in this file.
+Nothing else.
 
 ## Start a topic
 
 1. **Source.** If the learner names one, read it. If not, one research pass on the web to find one trusted source: the course guide, a textbook chapter, official docs. Facts, examples, and quiz numbers come from the source and cite it by section. No source, no lesson.
-2. **Goal.** One line, concrete: what they will be able to do. Ask if it is unclear.
-3. **Plan 3 to 6 lessons.** Each is a concept lesson or a drill. Prerequisites first. List them all in the sidebar; write only lesson 0 and lesson 1 now.
-4. **Lesson 0, "Where you're at."** Two or three short questions on the prerequisites. Sets the starting help level and whether a prerequisite lesson is needed. Skip it only if the learner just passed the prerequisite topic.
-5. Copy `template.html` from this skill's folder, replace the content, publish or open it (see Hosting), write the vault note, one line in the terminal.
+2. **Goal.** One line, concrete: what they will be able to do. Ask if it is unclear; if the learner is not there, pick one from the source. The goal goes in the vault note and as one plain sentence at the top of lesson 0, in words the learner already has.
+3. **Plan 3 to 6 lessons**, prerequisites first, each a concept lesson or a drill. Put the whole plan in the page's sidebar. Write only lesson 0 now: its grade decides the help level and whether a prerequisite lesson is needed, so lesson 1 is written after it.
+4. **Lesson 0, "Where you're at."** Two or three short questions on the prerequisites, auto-checked or interview; misconceptions already recorded in the vault are fair game here. Skip it only if the learner just passed the prerequisite topic; then lesson 1 is the first one written.
+5. Copy `template.html` from this skill's folder, replace its placeholders, delete the sample sections you are not writing, open the page (see Hosting), write the vault note, commit the vault, one line in the terminal.
 
-Returning to a topic: read the vault note, read the page from disk (hosted tier: read the published copy too, it is what the learner saw), continue from the active lesson.
+Returning to a topic: read the vault note and the page from disk, continue from the active lesson.
 
 ## Lessons
 
-Two kinds:
-
 - **Concept lesson.** Picture, under 120 words, then 2 to 4 interview questions in answer boxes: explain it back, predict, apply, break a wrong claim. Never yes/no, never multiple choice. You grade.
-- **Drill.** Picture or worked table, then 8 to 12 auto-checked items, multiple choice or a number. The first one or two items retrieve the previous lesson. The page grades instantly; you read the wrong attempts for patterns.
+- **Drill.** Picture or worked table, then 8 to 12 auto-checked items, multiple choice or a number. The first one or two items reuse the previous lesson's own example or key term, so a label alone is not a retrieval. Items test only rules from passed lessons, even if the source table shows more. The page grades instantly; you read the wrong attempts for patterns.
 
-**Picture rules.** The picture comes before any prose. Inline SVG drawn with the lesson's real numbers, colors from the CSS tokens so it reads in both themes. A worked table with a "what happened" column counts as a picture for procedures. Mermaid (`<pre class="mermaid">`) only for flows, and only on a hosted tier that renders it natively; a local page has no mermaid, so draw the flow as SVG. The caption points at one feature. If you cannot draw it, the lesson is too wide: split it.
+**Picture.** Before any prose. Inline SVG drawn with the lesson's real numbers, colors from the CSS tokens so it reads in both themes. A worked table with a "what happened" column counts as a picture for procedures. No mermaid: the page has no renderer, draw flows as SVG. The caption points at one feature. If you cannot draw it, the lesson is too wide: split it.
 
-**Prose rules.** Simple words. Define a term at first use. One idea per sentence. Plain dashes. No filler, no catchy section labels.
+**Prose.** Simple words. Define a term at first use. One idea per sentence. Plain dashes. No filler, no catchy section labels.
 
-**Question rules.** Multiple choice: 4 options, same length as far as possible, each with a `data-why`. Numeric: `data-answer` accepts alternatives with `|`, fractions and decimals compare as numbers. Interview prompts ask for reasoning, not a number. Frame items in the goal's context.
+**Questions.** Multiple choice: 4 options, similar length, each with a `data-why`. Numeric: `data-answer` lists every form you accept with `|` (`1/6|0.1667|0.167`); the page matches exact values, not roundings you did not list. Interview prompts ask for reasoning, not a number. Frame items in the goal's context.
 
 ## Grading on "done"
 
-1. Get the lesson's answers.
-   - **Hosted:** query the page database, collection `answers`, where `lesson == <section id>`.
-   - **Local:** the learner pasted a JSON block `{topic, lesson, answers: [...]}` with `done`. If it is missing, one line: "press Copy answers at the end of the lesson and paste it here".
-   Each answer has `q`, `kind`, `value`, `correct`, `attempts`. A null `value` is a blank.
-2. For each wrong or weak answer, decide which it is and respond that way:
+1. Get the lesson's answers from the pasted JSON block `{topic, lesson, answers: [{q, kind, value, correct, attempts}]}`. Missing block: one line, "press Copy answers at the end of the lesson and paste it here". A null `value` is a blank.
+2. Sort each wrong or weak answer and respond that way:
    - **wrong model**: show where their answer parts from reality (a delta picture or a two-line trace) and ask one question. Do not give the fix. Log it under Misconceptions.
    - **slip**: point at the step, ask what it assumes.
    - **edge case**: hand over the failing input only.
-3. Write feedback under each question on the page. Quote their key line so the page stands alone. Set the lesson `passed` or keep it `active`. Write the next lesson if passed. Update the strip, the sidebar dots, the progress bar, the cheat sheet, and the glossary. Republish.
-4. Append graded answers and any misconception to the vault note. Commit the vault.
+3. On the page: fill the `.feedback` block under each question and remove `hidden`. Quote their key line so the page stands alone. Lesson passed: set its `data-status="passed"`, write the next lesson's section with `data-status="active"`, add its rule to the cheat sheet. Not passed: leave it active, set `data-note="redo q2"`, and rewrite the lesson's `.done` line to say which answer to redo in its box and to copy again. The script draws the strip, the sidebar, and the progress bar from those attributes.
+4. Vault note: tick the lesson line, add any misconception. Commit.
 5. One line in the terminal.
 
-`stuck` and `too hard`: raise the help level now, add a hint or worked step to the current lesson, republish. `too easy`: lower it. `just tell me`: give the answer on the page and move on. `next`: move on and note it.
+`stuck` and `too hard`: help level up one now, add a hint or worked step to the current lesson. `too easy`: down one. `just tell me`: put the answer on the page and move on. `next`: move on and note it.
 
 ## Help level
 
-A dial from 3 to 0, shown in every lesson strip. 3: worked example traced, annotated picture. 2: outline, structural picture. 1: bare prompt. 0: learner defines the check. Two clean first-try passes in a row: go down one and say so. Struggling: go up one right away, and look for the misconception that caused the load. Hold the struggle by default; "just tell me" ends it. Direct factual questions outside a challenge get a direct answer.
+`data-help` on each lesson, 3 to 0. 3: worked example traced, annotated picture. 2: outline, structural picture. 1: bare prompt (a drill keeps its picture, drops the scaffolding). 0: learner defines the check. Start at 2 unless lesson 0 says otherwise. Up one on `stuck`, `too hard`, or a second miss on the same question after a redo; a first wrong model gets the redo at the same level, because a worked example on that screen would hand over the fix. Down one on `too easy` or after two first-try passes of full lessons in a row (lesson 0 does not count). Say on the page when it moves. Hold the struggle by default; "just tell me" ends it. Direct factual questions outside a challenge get a direct answer.
 
 ## Accuracy
 
@@ -78,31 +73,20 @@ Everything factual traces to the source. Unsure of a fact, formula, name, or pol
 
 ## Hosting
 
-Two tiers. Pick on the first publish, record it in the vault note's `page:` line, and keep it for the topic.
+Default: the page opens from disk (`open`, `xdg-open`, or the browser; if you cannot open it, give the path). Answers live in that browser's localStorage and reach you through **Copy answers**. Saving the file is the whole publish step; tell the learner to reload.
 
-- **Hosted.** The host has a tool that publishes an HTML file to a URL and gives the page a small shared database. Answers sync between laptop and phone, and you read them straight from the database. Use it when available.
-- **Local.** No such tool. Open the file from disk (`open`, `xdg-open`, or the browser). Answers live in that browser's localStorage. The page shows a **Copy answers** button after each lesson; the learner pastes the JSON into the terminal with `done`. Laptop only.
+If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone instead. Read `references/hosted.md` before the first publish. Pick the tier on the first publish, record it in the vault note's `page:` line, keep it for the topic.
 
-The page detects the tier itself: it uses the host database when one is exposed (`window.claude.use('db')` today; other hosts go in the same hook in the template) and localStorage otherwise. The copy button appears only on the local tier.
-
-**Hosted, Claude Code.** Load the `artifact-design` and `artifact-capabilities` skills once per session before the first publish. First publish: `Artifact` with `file_path`, `capabilities: {db: {}}`, `favicon`, `description`; put the URL in the vault note. Later sessions: `Artifact` action `read` with the URL first, then publish with `url`. Grading reads answers with `Artifact` action `read_db`, `db_op` `query`. Republish after every edit; open views update on their own. The phone uses the same URL, signed in. The page always opens at the active lesson; hash links in the URL do not reach it, so never promise a deep link.
-
-**Hosted, other hosts.** Same shape: publish the file, give the page a database the script can reach through the hook, read the `answers` collection when grading. If the host cannot do all three, use the local tier.
-
-**Local.** "Republish" means save the file and tell the learner to reload. `page:` in the vault note is the file path.
-
-**Either tier.**
-- The page stays one file: inline style and script, no external assets, fonts only from Google Fonts. Keep the template's structure (see the comment at its top): `#app[data-topic]`, one `section` per lesson, `.q[data-q][data-kind]` blocks with ids `<lesson>-q<n>`, a `.feedback` block under each question, a `.done` line at the end of each lesson.
-- Lesson status: `passed`, `active`, `planned`. Planned lessons are sidebar text only, no section. The cheat sheet holds only passed material, compressed. A glossary term goes in once the learner has used it correctly.
+The page stays one file: inline style and script, no external assets, fonts only from Google Fonts. Keep the template's structure; the comment at its top lists what you edit and what the script derives.
 
 ## Vault note
 
-File it by the vault's own conventions (inside the course or project folder when one exists, else the vault root), no frontmatter, terse, wikilinks to existing atomic notes. Add it to the course hub note or `Home.md`.
+File it by the vault's own conventions (inside the course or project folder when one exists, else the vault root), named after the topic (add a word if an atomic note already has that name), no frontmatter, terse, wikilinks to atomic notes (existing ones, or ones the vault would want). Link it from the course hub note or `Home.md`. The page holds the answers and feedback; the note holds what carries across topics.
 
 ```
 # Stars and Bars
 
-page: <url, or file path on the local tier>
+page: ~/Learning/stars-and-bars/index.html
 source: course study guide 4.9, 4.10
 goal: pick the right formula on sight and compute it under a minute
 related: [[stars and bars]], [[combination]]
@@ -110,15 +94,9 @@ related: [[stars and bars]], [[combination]]
 ## Lessons
 - [x] 0 where you're at - 2026-09-09
 - [x] 1 bars make bins - 2026-09-09, help 2, first try
-- [ ] 2 pick the formula - active
+- [ ] 2 pick the formula - active, help 2, redo q4
 - [ ] 3 at least one each
 
 ## Misconceptions
 - 2026-09-09 l01 q3: treats identical items as distinct (k^n reflex) - watch on every counting item
-
-## Answers
-### 1 bars make bins
-q1: "a bar is the line between one kid's pile and the next" -> pass
-q2: 9 stars, 3 bars, 12 slots, C(12,3) = 220 -> pass
-q3: named the double count -> pass
 ```

@@ -23,7 +23,7 @@ Paths and learner preferences are in `SKILL.md`: pages under `~/Learning/<topic>
 
 Outside Claude Code, ask for it by name: "use the learn skill: stars and bars, source ...".
 
-The tutor asks for a goal if it is unclear, plans 3 to 6 lessons, writes lesson 0 (where you're at) and lesson 1, then publishes or opens the page.
+The tutor asks for a goal if it is unclear, plans 3 to 6 lessons, writes lesson 0 (where you're at), then opens the page. Each lesson you pass unlocks the next one.
 
 Do the lesson on the page, then say one word in the terminal:
 
@@ -47,4 +47,5 @@ The page works two ways, and detects which on its own.
 ## Files
 
 - `SKILL.md` - the skill
-- `template.html` - the topic page template, with a worked example (stars and bars) showing a probe, a passed concept lesson with feedback, an active drill, cheat sheet, glossary, and the how-it-works page
+- `template.html` - the topic page template: a probe, a sample concept lesson, a sample drill, the cheat sheet, and the how-it-works page. The script draws the sidebar, progress bar, and lesson strips from each section's attributes
+- `references/hosted.md` - how to publish the page with a synced answer database when the agent has such a tool

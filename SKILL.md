@@ -52,7 +52,7 @@ Returning to a topic: read the vault note and the page from disk, continue from 
 
 ## Grading on "done"
 
-1. Get the lesson's answers from the pasted JSON block `{topic, lesson, answers: [{q, kind, value, correct, attempts}]}`. Missing block: one line, "press Copy answers at the end of the lesson and paste it here". A null `value` is a blank.
+1. Get the lesson's answers from the pasted JSON block `{topic, lesson, answers: [{q, kind, value, correct, attempts, history}]}`. Missing block: one line, "press Copy answers at the end of the lesson and paste it here". A null `value` is a blank. `value` and `correct` are the latest attempt; `history` (`[{at, value, correct}]`, oldest first) holds every checked attempt, so read the wrong ones in order for their pattern. Ignore `draft`: a num item with only a draft is a blank.
 2. Sort each wrong or weak answer and respond that way:
    - **wrong model**: show where their answer parts from reality (a delta picture or a two-line trace) and ask one question. Do not give the fix. Log it under Misconceptions.
    - **slip**: point at the step, ask what it assumes.
@@ -77,7 +77,7 @@ Default: the page opens from disk (`open`, `xdg-open`, or the browser; if you ca
 
 If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone instead. Read `references/hosted.md` before the first publish. Pick the tier on the first publish, record it in the vault note's `page:` line, keep it for the topic.
 
-The page stays one file: inline style and script, no external assets, fonts only from Google Fonts. Keep the template's structure; the comment at its top lists what you edit and what the script derives.
+The page stays one file: inline style and script, no external assets or requests (system fonts). Keep the template's structure; the comment at its top lists what you edit and what the script derives. An item showing "This item is broken" has bad markup (unknown `data-kind`, a missing part, a bad or repeated `data-q`); fix it.
 
 ## Vault note
 

@@ -17,13 +17,18 @@
                                             data-status="active|passed", data-help="0..3", optional data-note="redo q2",
                                             data-graded="<at>" once graded: the at of the Finish marker you graded
                                             (the current time if there was none). A Finish newer than it waits for you.
-    .q[data-q="<lesson>-q<n>"][data-kind]   a question; kind = text | mc | num. Ids are unique across the goal page.
+    .q[data-q="<lesson>-q<n>"][data-kind]   a question; kind = text | mc | num | order. Ids are unique across the goal page.
       mc:  .q[data-answer=key] > .opts > button.opt[data-key][data-why]
+        spot the error: an mc whose .opts also has class trace; its options are the 3 to 8 lines of a worked trace,
+        each with a data-why, and data-answer is the line with the error.
+      order: .q[data-answer="b d a c"][data-why][data-hint] > .steps > button.step[data-key], then .fb. Write the
+        steps scrambled; data-answer is the one valid order. The script adds the placed list and the Check button.
       num: .q[data-answer="35|35.0|7/2"][data-why][data-hint] > .row > input + button.check, then .fb
       text: textarea + .save
       predict: an mc or num with data-once (one attempt, then it locks and shows the answer; the first form in
         data-answer is the one shown) and a .reveal[hidden] after .fb that opens after the attempt, right or wrong.
         A concept lesson opens with one; its picture goes in the .reveal.
+    #app[data-confidence="all"]             optional, from the profile: the confidence tag on every question (below)
     .feedback[hidden]                       under every question; the tutor fills it after grading and removes hidden
     section#review > .q                     review items, written when a lesson passes: an mc or num with data-once,
                                             data-rule="rNN" (the cheat-sheet rule it tests) and data-due="YYYY-MM-DD",
@@ -38,6 +43,10 @@
     the practice calendar (the last 5 weeks) and the streak, from the session log (see streak in the script),
     the rule strength dots and words on each cheat-sheet rule, from data-level,
     a check mark on a right answer, animated only as it happens and never under reduced motion,
+    the confidence tag (sure / think so / guess) above the answer on each item in a probe, each data-once item and
+      each review item (every item with #app[data-confidence="all"]). An mc, num or order item takes no first attempt
+      until it is tagged, and the tag locks with that attempt; a text item's tag can change. Stored as confidence.
+    on an order item, tap a step to place it next, tap a placed step to send it back,
     "That's today. Next review Thu 2 Oct." once today's review is done and a lesson was finished today, with
       I want more; the repair offer the day after two missed days; either opens an extra review set,
     on the next lesson until it is started, the passed lesson's p.can line ("Passed: <title>. You can now ..."),
@@ -219,6 +228,31 @@
   @keyframes tick { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
   .fb.bad { color: var(--bad); }
   .reveal { margin-top: 14px; }
+  .opts.trace { gap: 4px; }
+  .opts.trace button.opt { font: 14px/1.45 var(--mono); padding: 7px 12px; white-space: pre-wrap; }
+  .steps, .placed { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .placed { counter-reset: step; margin-bottom: 10px; }
+  .placed:empty, .steps[hidden] { display: none; }
+  .placed li { counter-increment: step; display: flex; gap: 10px; align-items: baseline; margin: 0; }
+  .placed li::before { content: counter(step) "."; font: 600 13px var(--mono); color: var(--muted); min-width: 1.4em; }
+  button.step {
+    flex: 1; width: 100%; text-align: left; font: inherit; font-size: 1rem; color: var(--ink); background: var(--paper);
+    border: 1px dashed var(--rule); border-radius: 6px; padding: 10px 14px; cursor: pointer;
+  }
+  .placed button.step { border-style: solid; }
+  button.step:hover { border-color: var(--accent); }
+  button.step:disabled { cursor: default; }
+  .q.correct .placed button.step { border-color: var(--good); background: var(--good-bg); }
+  .order-row { margin-top: 10px; }
+  .sure { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; font: 12px var(--mono); color: var(--muted); }
+  .sure button {
+    font: 12px var(--mono); color: var(--ink); background: var(--paper); border: 1px solid var(--rule);
+    border-radius: 12px; padding: 4px 10px; cursor: pointer;
+  }
+  .sure button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+  .sure button:disabled { cursor: default; }
+  .sure button:disabled:not([aria-pressed="true"]) { opacity: .55; }
+  .sure.ask { color: var(--warn); }
   .save { display: block; margin-top: 6px; font: 12px var(--mono); color: var(--muted); min-height: 1em; }
   .feedback { margin-top: 14px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: .97rem; }
   .feedback .kind { color: var(--muted); }
@@ -427,6 +461,32 @@
         <div class="feedback" hidden></div>
       </div>
 
+      <div class="q" data-q="l02-q3" data-kind="mc" data-answer="c">
+        <span class="kind">spot the error</span>
+        <p class="prompt">[A worked trace with one wrong line. Tap the line where it goes wrong.]</p>
+        <div class="opts trace">
+          <button class="opt" type="button" data-key="a" data-why="[why this line is right]"><span class="key">1</span>[trace line]</button>
+          <button class="opt" type="button" data-key="b" data-why="[why this line is right]"><span class="key">2</span>[trace line]</button>
+          <button class="opt" type="button" data-key="c" data-why="[what this line gets wrong]"><span class="key">3</span>[trace line]</button>
+          <button class="opt" type="button" data-key="d" data-why="[why this line is right, given the one before]"><span class="key">4</span>[trace line]</button>
+        </div>
+        <div class="fb"></div>
+        <div class="feedback" hidden></div>
+      </div>
+
+      <div class="q" data-q="l02-q4" data-kind="order" data-answer="b d a c" data-why="[why this order, shown when right]" data-hint="[hint, shown when wrong]">
+        <span class="kind">order the steps</span>
+        <p class="prompt">[Tap the steps in the order you would do them. Tap a placed step to send it back.]</p>
+        <div class="steps">
+          <button class="step" type="button" data-key="a">[third step]</button>
+          <button class="step" type="button" data-key="b">[first step]</button>
+          <button class="step" type="button" data-key="c">[fourth step]</button>
+          <button class="step" type="button" data-key="d">[second step]</button>
+        </div>
+        <div class="fb"></div>
+        <div class="feedback" hidden></div>
+      </div>
+
       <p class="done">All checked? Press <b>Finish lesson</b>. The tutor reads your attempts, not just the score.</p>
       <nav class="pager"></nav>
     </section>
@@ -460,7 +520,8 @@
       <ul>
         <li><b>One page per goal.</b> Lessons are listed in the sidebar in order, grouped by topic. A filled dot is passed, a ringed dot is the one to do now, grey is not written yet.</li>
         <li><b>Guess first.</b> A concept lesson opens with one question you answer before it teaches anything. You get one try, and a wrong guess costs nothing: it makes the picture that opens next easier to remember. The caption points at the one thing to look at.</li>
-        <li><b>Two kinds of lesson.</b> A concept lesson ends with a few questions, at least one in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
+        <li><b>How sure?</b> Some questions ask first: sure, think so, or guess. Tap one, then answer. It tells the tutor whether a wrong answer was a slip or a belief, and a lucky guess does not count as knowing the rule.</li>
+        <li><b>Two kinds of lesson.</b> A concept lesson ends with a few questions, at least one in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards. Some items show a worked example with one wrong line to find, or steps to put in order: tap a step to place it next, tap it again to send it back.</li>
         <li><b>Your answers save as you type.</b> When the page is served from your computer, or hosted by a tool that can store them, they are saved there and reach your other devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which. If some answers are not sent yet, it says how many, and Copy answers appears on the lesson.</li>
         <li><b>When you finish a lesson, press Finish lesson.</b> The tutor grades finished lessons first thing on its next run: feedback appears under each question, the next lesson unlocks, and the vault note gets the record. Until then the lesson says it is waiting for the tutor. On a local page, Finish lesson also copies a block: paste it in the terminal with <code>done</code>. Saying <code>done</code> on its own works too.</li>
         <li><b>The page remembers where you stopped,</b> on every device, and opens there. Back after a few days away, a line at the top says how far you got and which question is next.</li>
@@ -978,6 +1039,7 @@
   function record(q, fields, attempt) {
     var id = q.getAttribute('data-q'), old = store.get(id), k;
     var at = stamp(old);
+    if (attempt && q._picked && !(old && old.confidence)) fields.confidence = q._picked;   /* the tag goes with its first attempt */
     var r = { lesson: q._section.id, q: id, kind: q.getAttribute('data-kind'), value: null, correct: null, attempts: 0, at: at, history: [] };
     if (old) for (k in old) if (k !== 'lesson' && k !== 'q' && k !== 'kind') r[k] = old[k];
     for (k in fields) { if (fields[k] === undefined) delete r[k]; else r[k] = fields[k]; }
@@ -988,6 +1050,7 @@
     }
     r.at = at;
     store.put(r);
+    if (q._tagPaint) q._tagPaint();
     if (attempt || (typeof fields.value === 'string' && fields.value.trim())) {
       try {
         noteAnswer(q);
@@ -1110,7 +1173,7 @@
     }
     opts.forEach(function (o) {
       o.addEventListener('click', function () {
-        if (locked) return;
+        if (locked || !gate(q)) return;
         var key = o.getAttribute('data-key');
         var correct = key === answer;
         locked = correct || once;
@@ -1161,7 +1224,7 @@
       if (draft !== d.draft) record(q, { draft: draft });
     }
     function check() {
-      if (!input.value.trim() || btn.disabled) return;
+      if (!input.value.trim() || btn.disabled || !gate(q)) return;
       clearTimeout(timer); timer = null;
       var correct = matches(input.value);
       show(correct);
@@ -1210,11 +1273,148 @@
     };
   }
 
-  var KINDS = { mc: bindMC, num: bindNum, text: bindText };
+  /* order the steps: tap a step to place it next, tap a placed step to send it back. The tutor writes the steps
+     scrambled and data-answer as the one valid order; the value is the placed keys, space-separated */
+  function bindOrder(q) {
+    var once = q.hasAttribute('data-once'), pool = part(q, '.steps'), fb = part(q, '.fb');
+    var steps = Array.prototype.slice.call(pool.querySelectorAll('button.step'));
+    var keys = steps.map(function (b) { return b.getAttribute('data-key') || ''; });
+    var answer = attr(q, 'data-answer').trim().split(/\s+/), byKey = {};
+    if (steps.length < 3) throw new Error('an order item needs at least 3 steps');
+    if (keys.some(function (k, i) { return !k || keys.indexOf(k) !== i; })) throw new Error('a step key is missing or repeats');
+    if (answer.length !== keys.length || keys.some(function (k) { return answer.indexOf(k) < 0; })) throw new Error('data-answer must name every step once');
+    steps.forEach(function (b) { byKey[b.getAttribute('data-key')] = b; });
+    var placed = document.createElement('ol');
+    placed.className = 'placed'; placed.setAttribute('aria-label', 'Your order');
+    pool.parentNode.insertBefore(placed, pool);
+    var row = document.createElement('div');
+    row.className = 'row order-row';
+    row.innerHTML = '<button class="check" type="button">Check</button>';
+    fb.parentNode.insertBefore(row, fb);
+    var btn = row.querySelector('button'), locked = false;
+    function order() {
+      return Array.prototype.map.call(placed.querySelectorAll('button.step'), function (b) { return b.getAttribute('data-key'); });
+    }
+    function paint() {
+      var full = order().length === steps.length;
+      btn.disabled = locked || !full;
+      pool.hidden = full;
+      steps.forEach(function (b) { b.disabled = locked; });
+    }
+    /* placed steps in seq's order; every other step back in the pool, in the order the tutor wrote them */
+    function lay(seq) {
+      placed.textContent = '';
+      seq.forEach(function (k) { placed.appendChild(document.createElement('li')).appendChild(byKey[k]); });
+      steps.forEach(function (b) { if (seq.indexOf(b.getAttribute('data-key')) < 0) pool.appendChild(b); });
+      paint();
+    }
+    function parse(v) {
+      var seen = {};
+      return (typeof v === 'string' ? v.trim().split(/\s+/) : []).filter(function (k) {
+        if (!byKey.hasOwnProperty(k) || seen[k]) return false;
+        return (seen[k] = true);
+      });
+    }
+    function text(k) { return byKey[k].textContent.trim(); }
+    function show(correct) {
+      var why = q.getAttribute('data-why') || '';
+      fb.textContent = (correct ? 'Correct. ' + why : once ? 'Not this one. The order is: ' +
+        answer.map(function (k, i) { return (i + 1) + '. ' + text(k); }).join(' ') + ' ' + why :
+        'Not yet. ' + (q.getAttribute('data-hint') || '')).trim();
+      fb.className = 'fb ' + (correct ? 'good' : 'bad');
+      q.classList.toggle('correct', correct);
+      paint();
+      reveal(q);
+    }
+    /* a placement not yet checked is kept as draft; the tutor ignores it */
+    function saveDraft() {
+      var d = store.get(q.getAttribute('data-q')) || {}, seq = order().join(' ');
+      var draft = seq === (d.value == null ? '' : String(d.value)) ? undefined : seq;
+      if (draft !== d.draft) record(q, { draft: draft });
+    }
+    steps.forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (locked) return;
+        var seq = order(), k = b.getAttribute('data-key'), i = seq.indexOf(k);
+        if (i >= 0) seq.splice(i, 1); else seq.push(k);
+        lay(seq);
+        b.focus();   /* moving a button drops focus; keep the keyboard where it was */
+        saveDraft();
+      });
+    });
+    btn.addEventListener('click', function () {
+      if (btn.disabled || !gate(q)) return;
+      var seq = order().join(' '), correct = seq === answer.join(' ');
+      locked = correct || once;
+      show(correct);
+      if (correct) fb.classList.add('now');
+      record(q, { value: seq, correct: correct, draft: undefined }, true);
+      updateScore(q._section);
+    });
+    paint();
+    q._hydrate = function (d) {
+      if (!d) return;
+      var seq = parse(typeof d.draft === 'string' ? d.draft : d.value);
+      if (d.value != null && d.value !== '') {
+        locked = !!d.correct || once;
+        if (locked) seq = parse(d.value);
+        lay(seq);
+        show(!!d.correct);
+      } else lay(seq);
+    };
+  }
+
+  var KINDS = { mc: bindMC, num: bindNum, text: bindText, order: bindOrder };
+
+  /* ---------- confidence tag: how sure the learner is, asked before the first attempt ----------
+     On a probe's items, data-once items and review items, or on every item with #app[data-confidence="all"].
+     An mc, num or order item takes no first attempt until it is tagged; the tag is held here and written with that
+     attempt, and then it locks, so it records how sure the learner was before seeing the result. A text item's tag
+     is written at once and can change. */
+  var SURE = ['sure', 'think so', 'guess'];
+  function wantsTag(q) {
+    return app.getAttribute('data-confidence') === 'all' || q.hasAttribute('data-once') ||
+      q._section === reviewSection || q._section.getAttribute('data-type') === 'probe';
+  }
+  function addTag(q) {
+    var id = q.getAttribute('data-q'), text = q.getAttribute('data-kind') === 'text';
+    var box = document.createElement('div'), label = document.createElement('span');
+    box.className = 'sure'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'How sure are you?');
+    label.textContent = 'How sure?'; label.setAttribute('aria-live', 'polite');
+    box.appendChild(label);
+    var btns = SURE.map(function (w) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = w; b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', function () {
+        var d = store.get(id);
+        if (b.disabled || (d && d.confidence === w)) return;
+        if (text) record(q, { confidence: w }); else { q._picked = w; q._tagPaint(); }
+      });
+      return box.appendChild(b);
+    });
+    var prompt = q.querySelector('.prompt');
+    q.insertBefore(box, prompt && prompt.parentNode === q ? prompt.nextSibling : q.firstChild);
+    function locked(d) { return !text && !!d && (d.attempts > 0 || (d.history || []).length > 0); }
+    q._tagPaint = function () {
+      var d = store.get(id), lock = locked(d), c = (d && d.confidence) || (lock ? null : q._picked);
+      btns.forEach(function (b) { b.setAttribute('aria-pressed', String(b.textContent === c)); b.disabled = lock; });
+      if (c || lock) { box.classList.remove('ask'); say(label, 'How sure?'); }
+    };
+    q._gate = function () {
+      var d = store.get(id);
+      if ((d && d.confidence) || locked(d) || q._picked) return true;
+      box.classList.add('ask');
+      say(label, 'How sure are you? Pick one first:');
+      btns[0].focus();
+      return false;
+    };
+    q._tagPaint();
+  }
+  function gate(q) { return !q._gate || q._gate(); }
 
   /* an item the script cannot run says so, and every other item keeps working */
   function broken(q, e) {
-    q._broken = true; q._hydrate = q._status = q._flush = null;
+    q._broken = true; q._hydrate = q._status = q._flush = q._gate = q._tagPaint = null;
     reveal(q);   /* a picture behind a broken item is still shown */
     if (window.console) console.error('learn: broken item', q, e);
     if (q.querySelector('.broken')) return;
@@ -1229,7 +1429,10 @@
   }
   function hydrate(q) {
     if (!q._hydrate) return;
-    try { q._hydrate(store.get(q.getAttribute('data-q'))); } catch (e) { broken(q, e); }
+    try {
+      q._hydrate(store.get(q.getAttribute('data-q')));
+      if (q._tagPaint) q._tagPaint();
+    } catch (e) { broken(q, e); }
   }
 
   var reviewSection = document.getElementById('review');
@@ -1247,11 +1450,12 @@
       if (byId[id]) throw new Error('data-q repeats another item');
       if (!KINDS.hasOwnProperty(kind)) throw new Error('unknown data-kind "' + kind + '"');
       if (q._section === reviewSection) {
-        if (kind === 'text' || !q.hasAttribute('data-once')) throw new Error('a review item is an mc or num with data-once');
+        if ((kind !== 'mc' && kind !== 'num') || !q.hasAttribute('data-once')) throw new Error('a review item is an mc or num with data-once');
         if (!usable(q.getAttribute('data-rule'))) throw new Error('missing or unusable data-rule');
         if (isNaN(dayNumber(q.getAttribute('data-due')))) throw new Error('data-due is not a YYYY-MM-DD date');
       }
       KINDS[kind](q);
+      if (wantsTag(q)) addTag(q);
       byId[id] = q;
     } catch (e) { broken(q, e); }
   });
@@ -1263,7 +1467,7 @@
   function updateScore(section) {
     var el = section && section.querySelector('.score');
     if (!el) return;
-    var qs = Array.prototype.slice.call(section.querySelectorAll('.q[data-kind="mc"], .q[data-kind="num"]'))
+    var qs = Array.prototype.slice.call(section.querySelectorAll('.q[data-kind="mc"], .q[data-kind="num"], .q[data-kind="order"]'))
       .filter(function (q) { return !q._broken; });
     if (!qs.length) return;
     var right = 0, tried = 0;

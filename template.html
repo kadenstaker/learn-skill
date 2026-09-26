@@ -24,7 +24,10 @@
       order: .q[data-answer="b d a c"][data-why][data-hint] > .steps > button.step[data-key], then .fb. Write the
         steps scrambled; data-answer is the one valid order. The script adds the placed list and the Check button.
       num: .q[data-answer="35|35.0|7/2"][data-why][data-hint] > .row > input + button.check, then .fb
-      text: textarea + .save
+      text: textarea + .save, then ul.ideas[hidden] (2 to 4 li: the key ideas a good answer covers, ideas only, never
+        the worked answer) and .model[hidden] (the model answer), then .feedback. An older text item without them still works.
+    data-hint on any item outside a probe that is not data-once: the Hint button's text (num and order also show it
+      after a wrong attempt).
       predict: an mc or num with data-once (one attempt, then it locks and shows the answer; the first form in
         data-answer is the one shown) and a .reveal[hidden] after .fb that opens after the attempt, right or wrong.
         A concept lesson opens with one; its picture goes in the .reveal.
@@ -47,6 +50,12 @@
       each review item (every item with #app[data-confidence="all"]). An mc, num or order item takes no first attempt
       until it is tagged, and the tag locks with that attempt; a text item's tag can change. Stored as confidence.
     on an order item, tap a step to place it next, tap a placed step to send it back,
+    on-page help, none of it on data-once or review items: Hint (data-hint, not in a probe; writes hinted: true);
+      Show me after a wrong mc, num or order attempt (shows the answer, locks the item, writes shown: true);
+      on a text item with .ideas or .model, Done (writes committed: the answer as it stood), then the key ideas as
+      tick boxes (ticked: [1, 3]) and Show me (opens .model, writes shown: true); Check my thinking on a committed
+      text item where the host grants sample (a nudge, never the fix, kept in nudges: [{at, value, text}]),
+    the too easy / about right / too hard row on each active lesson (state record feel:<lesson>),
     "That's today. Next review Thu 2 Oct." once today's review is done and a lesson was finished today, with
       I want more; the repair offer the day after two missed days; either opens an extra review set,
     on the next lesson until it is started, the passed lesson's p.can line ("Passed: <title>. You can now ..."),
@@ -253,6 +262,25 @@
   .sure button:disabled { cursor: default; }
   .sure button:disabled:not([aria-pressed="true"]) { opacity: .55; }
   .sure.ask { color: var(--warn); }
+  .help { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .help[hidden] { display: none; }
+  .help button, .feel button {
+    font: 13px var(--mono); color: var(--accent); background: var(--paper); border: 1px solid var(--rule);
+    border-radius: 12px; padding: 4px 11px; cursor: pointer;
+  }
+  .help button[hidden] { display: none; }
+  .help button:disabled { opacity: .55; cursor: default; }
+  .hint { margin: 8px 0 0; font-size: .95rem; color: var(--warn); }
+  .ideas-head { margin: 12px 0 4px; font: 12px var(--mono); color: var(--muted); }
+  .ideas { list-style: none; padding: 0; margin: 0; }
+  .ideas li { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+  .ideas input { flex: none; width: 1.05em; height: 1.05em; accent-color: var(--good); }
+  .ideas[hidden], .ideas-head[hidden], .hint[hidden], .model[hidden], .nudge[hidden] { display: none; }
+  .model { margin-top: 12px; padding: 10px 14px; border-left: 3px solid var(--good); background: var(--good-bg); border-radius: 0 6px 6px 0; font-size: .97rem; }
+  .nudge { margin: 10px 0 0; padding: 8px 12px; border: 1px dashed var(--accent); border-radius: 6px; font-size: .95rem; }
+  .feel { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 26px; font: 12px var(--mono); color: var(--muted); }
+  .feel button { color: var(--ink); }
+  .feel button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
   .save { display: block; margin-top: 6px; font: 12px var(--mono); color: var(--muted); min-height: 1em; }
   .feedback { margin-top: 14px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: .97rem; }
   .feedback .kind { color: var(--muted); }
@@ -354,7 +382,7 @@
       <h1>Where you're at</h1>
       <p>[One or two sentences. Wrong or blank answers are useful: they set where lesson 1 starts.]</p>
 
-      <div class="q" data-q="l00-q1" data-kind="num" data-answer="[36|36.0]" data-why="[why, shown when correct]" data-hint="[hint, shown when wrong]">
+      <div class="q" data-q="l00-q1" data-kind="num" data-answer="[36|36.0]" data-why="[why, shown when correct]">
         <span class="kind">compute</span>
         <p class="prompt">[A question with a single numeric answer. Fractions and decimals both work.]</p>
         <div class="row"><input class="num" id="l00-q1" type="text" autocomplete="off"><button class="check" type="button">Check</button></div>
@@ -367,6 +395,8 @@
         <p class="prompt">[A question answered in the learner's own words.]</p>
         <textarea id="l00-q2" rows="4"></textarea>
         <span class="save"></span>
+        <ul class="ideas" hidden><li>[a key idea a good answer covers]</li><li>[another]</li></ul>
+        <div class="model" hidden><p>[the model answer, shown by Show me]</p></div>
         <div class="feedback" hidden></div>
       </div>
 
@@ -404,19 +434,23 @@
 
       <p>[Under 120 words in total. Simple words, one idea per sentence, define a term at first use, cite the source section.]</p>
 
-      <div class="q" data-q="l01-q2" data-kind="text">
+      <div class="q" data-q="l01-q2" data-kind="text" data-hint="[hint: where to start, not the answer]">
         <span class="kind">explain</span>
         <p class="prompt">[Explain it back in your own words.]</p>
         <textarea id="l01-q2" rows="4"></textarea>
         <span class="save"></span>
+        <ul class="ideas" hidden><li>[a key idea a good answer covers]</li><li>[another]</li><li>[another]</li></ul>
+        <div class="model" hidden><p>[the model answer, shown by Show me]</p></div>
         <div class="feedback" hidden></div>
       </div>
 
-      <div class="q" data-q="l01-q3" data-kind="text">
+      <div class="q" data-q="l01-q3" data-kind="text" data-hint="[hint]">
         <span class="kind">break it</span>
         <p class="prompt">[A wrong claim to break: name what it gets wrong and give one concrete case. Or an apply item as mc or num, when one answer is right.]</p>
         <textarea id="l01-q3" rows="4"></textarea>
         <span class="save"></span>
+        <ul class="ideas" hidden><li>[a key idea a good answer covers]</li><li>[another]</li></ul>
+        <div class="model" hidden><p>[the model answer, shown by Show me]</p></div>
         <div class="feedback" hidden></div>
       </div>
 
@@ -448,7 +482,7 @@
         <div class="feedback" hidden></div>
       </div>
 
-      <div class="q" data-q="l02-q2" data-kind="mc" data-answer="c">
+      <div class="q" data-q="l02-q2" data-kind="mc" data-answer="c" data-hint="[hint]">
         <span class="kind">choose</span>
         <p class="prompt">[Item with four options of similar length.]</p>
         <div class="opts">
@@ -461,7 +495,7 @@
         <div class="feedback" hidden></div>
       </div>
 
-      <div class="q" data-q="l02-q3" data-kind="mc" data-answer="c">
+      <div class="q" data-q="l02-q3" data-kind="mc" data-answer="c" data-hint="[hint]">
         <span class="kind">spot the error</span>
         <p class="prompt">[A worked trace with one wrong line. Tap the line where it goes wrong.]</p>
         <div class="opts trace">
@@ -525,6 +559,8 @@
         <li><b>Your answers save as you type.</b> When the page is served from your computer, or hosted by a tool that can store them, they are saved there and reach your other devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which. If some answers are not sent yet, it says how many, and Copy answers appears on the lesson.</li>
         <li><b>When you finish a lesson, press Finish lesson.</b> The tutor grades finished lessons first thing on its next run: feedback appears under each question, the next lesson unlocks, and the vault note gets the record. Until then the lesson says it is waiting for the tutor. On a local page, Finish lesson also copies a block: paste it in the terminal with <code>done</code>. Saying <code>done</code> on its own works too.</li>
         <li><b>The page remembers where you stopped,</b> on every device, and opens there. Back after a few days away, a line at the top says how far you got and which question is next.</li>
+        <li><b>Help on the page.</b> <b>Hint</b> gives a nudge on where to start. <b>Show me</b> gives the answer once you have tried; the tutor sees that you asked, and that is fine. On a question in your own words, press <b>Done</b> when you have written it: a short list of what a good answer covers opens, and you tick what yours has. Where the page runs inside Claude, <b>Check my thinking</b> points at the weak spot without giving the fix. The tutor still grades your answer.</li>
+        <li><b>This lesson was</b> too easy, about right or too hard: tap one at the end of a lesson and the tutor sets the next lesson's help level from it.</li>
         <li><b>Other words the terminal understands:</b> <code>stuck</code> (more help now), <code>too easy</code> or <code>too hard</code> (change the help level), <code>just tell me</code> (get the answer), <code>next</code> (move on).</li>
         <li><b>Help level.</b> Each lesson shows one: 3 worked example, 2 outline, 1 bare, 0 you define the check. Two clean lessons in a row moves it down. Getting stuck moves it up.</li>
         <li><b>When you are wrong,</b> the tutor first works out why. A wrong mental model gets a picture of where your answer parts from reality and one question. A slip gets a finger pointed at the step. An edge case gets the failing input. You get the answer whenever you ask for it.</li>
@@ -1051,6 +1087,7 @@
     r.at = at;
     store.put(r);
     if (q._tagPaint) q._tagPaint();
+    if (q._helpPaint) q._helpPaint();
     if (attempt || (typeof fields.value === 'string' && fields.value.trim())) {
       try {
         noteAnswer(q);
@@ -1148,7 +1185,7 @@
   }
 
   function bindMC(q) {
-    var answer = attr(q, 'data-answer'), once = q.hasAttribute('data-once');
+    var answer = attr(q, 'data-answer'), once = false;
     var opts = Array.prototype.slice.call(q.querySelectorAll('.opt'));
     var fb = part(q, '.fb');
     if (!opts.length) throw new Error('missing .opt');
@@ -1156,6 +1193,7 @@
     if (!right) throw new Error('data-answer names no option');
     var locked = false;
     function apply(key, correct) {
+      once = fixed(q);
       opts.forEach(function (o) {
         var mine = o.getAttribute('data-key') === key;
         o.classList.toggle('right', (mine && correct) || (once && o === right));
@@ -1179,7 +1217,7 @@
         if (locked || !gate(q)) return;
         var key = o.getAttribute('data-key');
         var correct = key === answer;
-        locked = correct || once;
+        locked = correct || fixed(q);
         apply(key, correct);
         if (correct) fb.classList.add('now');   /* the quiet check mark, only as it happens */
         record(q, { value: key, correct: correct }, true);
@@ -1188,7 +1226,7 @@
     });
     q._hydrate = function (d) {
       if (!d || d.value == null) return;
-      locked = !!d.correct || once;
+      locked = !!d.correct || fixed(q);
       apply(d.value, !!d.correct);
     };
   }
@@ -1197,7 +1235,7 @@
     var id = q.getAttribute('data-q');
     var input = part(q, 'input'), btn = part(q, 'button.check'), fb = part(q, '.fb');
     var forms = attr(q, 'data-answer').split('|'), answers = forms.map(norm);
-    var once = q.hasAttribute('data-once'), timer = null;
+    var once = false, timer = null;
     function norm(s) { return String(s).trim().toLowerCase().replace(/\s+/g, '').replace(/,/g, ''); }
     function toNumber(s) {
       if (/^-?\d+\/\d+$/.test(s)) { var f = s.split('/'); return Number(f[1]) ? Number(f[0]) / Number(f[1]) : null; }
@@ -1212,6 +1250,7 @@
     }
     function show(correct) {
       var why = q.getAttribute('data-why') || '';
+      once = fixed(q);
       fb.textContent = (correct ? 'Correct. ' + why : once ? 'Not this one. The answer is ' + forms[0].trim() + '. ' + why :
         'Not yet. ' + (q.getAttribute('data-hint') || '')).trim();
       fb.className = 'fb ' + (correct ? 'good' : 'bad');
@@ -1279,7 +1318,7 @@
   /* order the steps: tap a step to place it next, tap a placed step to send it back. The tutor writes the steps
      scrambled and data-answer as the one valid order; the value is the placed keys, space-separated */
   function bindOrder(q) {
-    var once = q.hasAttribute('data-once'), pool = part(q, '.steps'), fb = part(q, '.fb');
+    var once = false, pool = part(q, '.steps'), fb = part(q, '.fb');
     var steps = Array.prototype.slice.call(pool.querySelectorAll('button.step'));
     var keys = steps.map(function (b) { return b.getAttribute('data-key') || ''; });
     var answer = attr(q, 'data-answer').trim().split(/\s+/), byKey = {};
@@ -1321,6 +1360,7 @@
     function text(k) { return byKey[k].textContent.trim(); }
     function show(correct) {
       var why = q.getAttribute('data-why') || '';
+      once = fixed(q);
       fb.textContent = (correct ? 'Correct. ' + why : once ? 'Not this one. The order is: ' +
         answer.map(function (k, i) { return (i + 1) + '. ' + text(k); }).join(' ') + ' ' + why :
         'Not yet. ' + (q.getAttribute('data-hint') || '')).trim();
@@ -1348,7 +1388,7 @@
     btn.addEventListener('click', function () {
       if (btn.disabled || !gate(q)) return;
       var seq = order().join(' '), correct = seq === answer.join(' ');
-      locked = correct || once;
+      locked = correct || fixed(q);
       show(correct);
       if (correct) fb.classList.add('now');
       record(q, { value: seq, correct: correct, draft: undefined }, true);
@@ -1359,7 +1399,7 @@
       if (!d) return;
       var seq = parse(typeof d.draft === 'string' ? d.draft : d.value);
       if (d.value != null && d.value !== '') {
-        locked = !!d.correct || once;
+        locked = !!d.correct || fixed(q);
         if (locked) seq = parse(d.value);
         lay(seq);
         show(!!d.correct);
@@ -1415,9 +1455,151 @@
   }
   function gate(q) { return !q._gate || q._gate(); }
 
+  /* ---------- on-page help: Hint, Done and the key ideas, Show me, Check my thinking ----------
+     A data-once item (a prediction, a review item) shows its answer after its one try, so it gets none of these.
+     Hint: an item with data-hint, outside a probe; pressing it writes hinted: true.
+     Show me: on an mc, num or order item after a wrong attempt; it shows the answer, locks the item like data-once
+       and writes shown: true. On a text item with a .model, once the answer is committed; it opens the .model.
+     Done: on a text item with .ideas or a .model. The first press writes committed (the answer as it stood), then
+       the key ideas open as tick boxes (ticked: their numbers, from 1) and Show me appears. Later edits change
+       value only, so committed keeps what was written before the ideas were seen.
+     Check my thinking: on a committed text item, only where the host gives the page Claude (the sample
+       capability). It asks for one nudge at the weak spot, never the fix, and keeps each in nudges. */
+  function fixed(q) {
+    var d = store.get(q.getAttribute('data-q'));
+    return q.hasAttribute('data-once') || !!(d && d.shown === true);
+  }
+  function helpless(q) { return q.hasAttribute('data-once') || q._section === reviewSection; }
+  function words(v) { return typeof v === 'string' && v.trim() !== ''; }
+  function addHelp(q) {
+    if (helpless(q)) return;
+    var id = q.getAttribute('data-q'), kind = q.getAttribute('data-kind'), text = kind === 'text';
+    var hint = q.getAttribute('data-hint'), ideas = q.querySelector('.ideas'), model = q.querySelector('.model');
+    if (hint && q._section.getAttribute('data-type') === 'probe') hint = null;   /* a probe measures, it does not help */
+    if (text && !ideas && !model && !hint) return;   /* an older text item: nothing to add */
+    var row = document.createElement('div'), btn = {};
+    row.className = 'help';
+    function button(name, label, fn) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = label; b.hidden = true;
+      b.addEventListener('click', fn);
+      return (btn[name] = row.appendChild(b));
+    }
+    var hintLine = null, nudge = null, ask = null, boxes = [];
+    if (text && (ideas || model)) button('done', 'Done', function () {
+      var ta = q.querySelector('textarea');
+      if (q._flush) q._flush();
+      if (!words(ta.value)) { ta.focus(); return; }
+      record(q, { value: ta.value, committed: ta.value });
+    });
+    if (hint) button('hint', 'Hint', function () { record(q, { hinted: true }); });
+    if (!text || model) button('show', 'Show me', function () {
+      record(q, { shown: true });
+      hydrate(q);
+      updateScore(q._section);
+    });
+    if (text) button('think', 'Check my thinking', think);
+    var after = text ? q.querySelector('.save') : q.querySelector('.order-row + .fb') || q.querySelector('.fb');
+    if (after && after.parentNode === q) q.insertBefore(row, after.nextSibling); else q.appendChild(row);
+    if (hint) {
+      hintLine = document.createElement('p');
+      hintLine.className = 'hint'; hintLine.hidden = true; hintLine.textContent = 'Hint: ' + hint;
+      q.insertBefore(hintLine, row.nextSibling);
+    }
+    if (ideas) {
+      Array.prototype.forEach.call(ideas.querySelectorAll('li'), function (li, i) {
+        var box = document.createElement('input');
+        box.type = 'checkbox';
+        box.setAttribute('aria-label', 'My answer covers this: ' + li.textContent.trim());
+        box.addEventListener('change', function () {
+          var t = [];
+          boxes.forEach(function (b, j) { if (b.checked) t.push(j + 1); });
+          record(q, { ticked: t });
+        });
+        li.insertBefore(box, li.firstChild);
+        boxes.push(box);
+      });
+      if (!ideas.querySelector('.ideas-head')) {
+        var head = document.createElement('p');
+        head.className = 'ideas-head';
+        head.textContent = 'A good answer covers these. Tick the ones yours does:';
+        ideas.parentNode.insertBefore(head, ideas);
+        ideas._head = head;
+      }
+    }
+    if (text) {
+      nudge = document.createElement('p');
+      nudge.className = 'nudge'; nudge.hidden = true; nudge.setAttribute('aria-live', 'polite');
+      var fbk = q.querySelector('.feedback');
+      q.insertBefore(nudge, fbk && fbk.parentNode === q ? fbk : null);
+    }
+    function think() {
+      var d = store.get(id) || {}, ta = q.querySelector('textarea');
+      if (!sampler || ask || !words(ta.value)) return;
+      if (q._flush) q._flush();
+      var answer = ta.value, prompt = q.querySelector('.prompt');
+      var input = 'A learner answered one question on a lesson page. Give them one nudge toward the weakest spot in their answer. ' +
+        'Rules: do not grade it, do not give the fix, do not state the correct answer or the idea it is missing, and do not quote or ' +
+        'paraphrase the model answer. Point at where to look again, as a question or a short pointer, in at most two short sentences, ' +
+        'in simple words, with plain dashes and never em dashes. If nothing is weak, say which part to check once more.\n\n' +
+        'Question: ' + (prompt ? prompt.textContent.trim() : '') + '\n\n' +
+        (ideas ? 'Key ideas a good answer covers:\n' + Array.prototype.map.call(ideas.querySelectorAll('li'), function (li) {
+          return '- ' + li.textContent.trim(); }).join('\n') + '\n\n' : '') +
+        (model ? 'Model answer (for you only, never repeat it):\n' + model.textContent.trim() + '\n\n' : '') +
+        'The learner\'s answer:\n' + answer.slice(0, 4000);
+      ask = new AbortController();
+      btn.think.disabled = true;
+      nudge.hidden = false; nudge.textContent = 'Thinking...';
+      sampler(input, { signal: ask.signal, onText: function (u) { nudge.textContent = u.text; } }).then(function (res) {
+        ask = null;
+        var now = store.get(id) || {}, list = Array.isArray(now.nudges) ? now.nudges.slice() : [];
+        list.push({ at: new Date().toISOString(), value: answer, text: res.text });
+        record(q, { nudges: list });
+      }, function (e) {
+        ask = null;
+        var code = e && e.code;
+        if (/^(not_granted|sampling_disabled|not_declared|capability_disabled|capability_removed)$/.test(code)) { sampler = null; nudge.textContent = ''; }
+        else if (code === 'cancelled') nudge.textContent = '';
+        else nudge.textContent = code === 'rate_limited' ? 'Too many checks just now. Try again later.' : 'Could not check just now. Try again in a moment.';
+      }).then(function () { paint(); });
+      paint();
+    }
+    function paint() {
+      var d = store.get(id) || {}, tried = (d.history || []).length > 0, committed = words(d.committed);
+      if (btn.done) btn.done.hidden = committed;
+      if (btn.hint) btn.hint.hidden = d.hinted === true || d.correct === true;
+      if (hintLine) hintLine.hidden = d.hinted !== true;
+      if (btn.show) btn.show.hidden = d.shown === true || (text ? !committed : !tried || d.correct === true);
+      if (ideas) { ideas.hidden = !committed; if (ideas._head) ideas._head.hidden = !committed; }
+      var t = Array.isArray(d.ticked) ? d.ticked : [];
+      boxes.forEach(function (b, j) { b.checked = t.indexOf(j + 1) >= 0; });
+      if (model) model.hidden = d.shown !== true;
+      if (btn.think) { btn.think.hidden = !sampler || !committed; btn.think.disabled = !!ask; }
+      if (nudge && !ask) {
+        var last = Array.isArray(d.nudges) && d.nudges[d.nudges.length - 1];
+        if (last && typeof last.text === 'string') { nudge.textContent = last.text; nudge.hidden = false; }
+        else nudge.hidden = !nudge.textContent;
+      }
+      row.hidden = !Array.prototype.some.call(row.children, function (b) { return !b.hidden; });
+    }
+    q._helpPaint = paint;
+    paint();
+  }
+  /* the host's Claude, when the page runs on one that grants sample: lights up Check my thinking */
+  var sampler = null;
+  if (goalOk && window.claude && typeof window.claude.use === 'function') {
+    try {
+      Promise.resolve(window.claude.use('sample')).then(function (s) {
+        if (typeof s !== 'function') return;
+        sampler = s;
+        questions.forEach(function (q) { if (q._helpPaint) q._helpPaint(); });
+      }, function () {});
+    } catch (e) {}
+  }
+
   /* an item the script cannot run says so, and every other item keeps working */
   function broken(q, e) {
-    q._broken = true; q._hydrate = q._status = q._flush = q._gate = q._tagPaint = null;
+    q._broken = true; q._hydrate = q._status = q._flush = q._gate = q._tagPaint = q._helpPaint = null;
     reveal(q);   /* a picture behind a broken item is still shown */
     if (window.console) console.error('learn: broken item', q, e);
     if (q.querySelector('.broken')) return;
@@ -1435,6 +1617,7 @@
     try {
       q._hydrate(store.get(q.getAttribute('data-q')));
       if (q._tagPaint) q._tagPaint();
+      if (q._helpPaint) q._helpPaint();
     } catch (e) { broken(q, e); }
   }
 
@@ -1459,6 +1642,7 @@
       }
       KINDS[kind](q);
       if (wantsTag(q)) addTag(q);
+      addHelp(q);
       byId[id] = q;
     } catch (e) { broken(q, e); }
   });
@@ -1568,6 +1752,32 @@
   }
   var finishBoxes = [];
   sections.forEach(function (s) { if (s.classList.contains('lesson')) { var box = addFinish(s); if (box) finishBoxes.push(box); } });
+
+  /* ---------- too easy / about right / too hard, per active lesson: feel:<lesson> {lesson, feel, device} ---------- */
+  var FEEL = ['too easy', 'about right', 'too hard'], feelRows = [];
+  function addFeel(section) {
+    var done = section.querySelector('.done');
+    if (!goalOk || !done || section.getAttribute('data-status') === 'passed') return;
+    var box = document.createElement('div'), key = 'feel:' + section.id;
+    box.className = 'feel'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'How was this lesson?');
+    box.appendChild(document.createElement('span')).textContent = 'This lesson was';
+    FEEL.forEach(function (w) {
+      var b = box.appendChild(document.createElement('button'));
+      b.type = 'button'; b.textContent = w;
+      b.addEventListener('click', function () {
+        setState(key, { lesson: section.id, feel: w, device: device() });
+        paint();
+      });
+    });
+    function paint() {
+      var r = store.state(key), f = r && r.feel;
+      Array.prototype.forEach.call(box.querySelectorAll('button'), function (b) { b.setAttribute('aria-pressed', String(b.textContent === f)); });
+    }
+    done.parentNode.insertBefore(box, done);
+    feelRows.push(paint);
+    paint();
+  }
+  sections.forEach(function (s) { if (s.classList.contains('lesson')) addFeel(s); });
   function showFinish() {
     var s = store.status();
     finishBoxes.forEach(function (box) {
@@ -1946,7 +2156,7 @@
     showFinish();
   }
   function rehydrate(name, ids) {
-    if (name === 'state') { showFinish(); showBanner(); showDerived(); return; }
+    if (name === 'state') { showFinish(); showBanner(); showDerived(); feelRows.forEach(function (f) { f(); }); return; }
     if (name !== 'answers') return;
     showDerived();
     var touched = [];

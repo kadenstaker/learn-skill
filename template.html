@@ -1165,7 +1165,10 @@
       var chosen = opts.filter(function (o) { return o.getAttribute('data-key') === key; })[0];
       var why = chosen ? (chosen.getAttribute('data-why') || '') : '';
       var text = (correct ? 'Correct. ' : 'Not this one. ') + why;
-      if (once && !correct) text += ' The answer is ' + answer + '. ' + (right.getAttribute('data-why') || '');
+      if (once && !correct) {   /* the label the learner sees: a trace line's number, else the key */
+        var shown = right.querySelector('.key');
+        text += ' The answer is ' + (shown && shown.textContent.trim() || answer) + '. ' + (right.getAttribute('data-why') || '');
+      }
       fb.textContent = text.trim();
       fb.className = 'fb ' + (correct ? 'good' : 'bad');
       q.classList.toggle('correct', correct);

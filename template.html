@@ -29,10 +29,19 @@
                                             data-rule="rNN" (the cheat-sheet rule it tests) and data-due="YYYY-MM-DD",
                                             ids rNN-v<n> that never repeat. Answered ones are replaced with fresh ids.
     section#cheat                           passed rules only, each an li[data-rule="rNN"][data-level="0..3"]
+    p.can in a passed lesson                "You can now ___." before its .done line, written on the pass; on the goal's
+                                            last lesson it restates the goal. The .done line then names the next step.
 
   What the script derives, so the tutor never edits it:
     the strip at the top of each lesson (number, type, help level, note), sidebar dots and status,
-    the progress bar, prev/next links, sidebar links for lessons that have no section yet (shown as planned),
+    the progress bar (passed lessons, plus a probe once any of its items is answered) and a count per topic,
+    the practice calendar (the last 5 weeks) and the streak, from the session log (see streak in the script),
+    the rule strength dots and words on each cheat-sheet rule, from data-level,
+    a check mark on a right answer, animated only as it happens and never under reduced motion,
+    "That's today. Next review Thu 2 Oct." once today's review is done and a lesson was finished today, with
+      I want more; the repair offer the day after two missed days; either opens an extra review set,
+    on the next lesson until it is started, the passed lesson's p.can line ("Passed: <title>. You can now ..."),
+    prev/next links, sidebar links for lessons that have no section yet (shown as planned),
     aria-live on the lines it writes (.fb, .save, .score, the sync line),
     the record store: every write lands in localStorage first, then goes to a store: a host database when
       the page runs on a host (hosted tier), else the goal's own server (served tier: #app[data-served] on
@@ -114,7 +123,7 @@
     line-height: 1.55;
   }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media (prefers-reduced-motion: reduce) { *, ::before, ::after { transition: none !important; animation: none !important; } }
 
   /* layout */
   .app { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100vh; }
@@ -146,6 +155,13 @@
   .item[data-status="active"] .dot { border-color: var(--accent); box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--accent); }
   .item[data-status="planned"] { color: var(--muted); }
   .sync { margin-top: auto; padding-top: 14px; font: 12px var(--mono); color: var(--muted); }
+  .topic-count { font-weight: 400; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+  .practice { margin: 4px 0 8px; font: 12px var(--mono); color: var(--muted); }
+  .cal { display: grid; grid-template-columns: repeat(7, 12px); gap: 3px; margin: 6px 0 4px; }
+  .cal i { width: 12px; height: 12px; border: 1px solid var(--rule); border-radius: 2px; }
+  .cal i.on { background: var(--good); border-color: var(--good); }
+  .cal i.today { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+  .cal i.later { visibility: hidden; }
 
   /* lesson */
   .strip { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 12px var(--mono); color: var(--muted); margin-bottom: 14px; }
@@ -198,6 +214,9 @@
   button.opt:disabled { cursor: default; }
   .fb { margin-top: 10px; font-size: .95rem; min-height: 1.2em; }
   .fb.good { color: var(--good); }
+  .fb.good::before { content: "\2713" / ""; display: inline-block; margin-right: .35em; font-weight: 700; }
+  .fb.good.now::before { animation: tick .3s ease-out; }
+  @keyframes tick { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
   .fb.bad { color: var(--bad); }
   .reveal { margin-top: 14px; }
   .save { display: block; margin-top: 6px; font: 12px var(--mono); color: var(--muted); min-height: 1em; }
@@ -226,6 +245,11 @@
   .review-state a { color: var(--accent); }
   .banner { margin: 0 0 18px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: .97rem; }
   .banner[hidden] { display: none; }
+  .banner .more { margin-left: 8px; font-size: 14px; padding: 6px 12px; }
+  .dots { display: inline-flex; gap: 3px; margin-right: 8px; vertical-align: 1px; }
+  .dots i { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--good); }
+  .dots i.on { background: var(--good); }
+  .level { font: 12px var(--mono); color: var(--muted); margin-left: 6px; }
   .fresh { position: sticky; bottom: 0; z-index: 4; display: flex; gap: 12px; align-items: center; justify-content: space-between;
            margin-top: 20px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
   .fresh[hidden] { display: none; }
@@ -444,7 +468,9 @@
         <li><b>Help level.</b> Each lesson shows one: 3 worked example, 2 outline, 1 bare, 0 you define the check. Two clean lessons in a row moves it down. Getting stuck moves it up.</li>
         <li><b>When you are wrong,</b> the tutor first works out why. A wrong mental model gets a picture of where your answer parts from reality and one question. A slip gets a finger pointed at the step. An edge case gets the failing input. You get the answer whenever you ask for it.</li>
         <li><b>The cheat sheet</b> grows as you pass lessons. It holds only rules you have already used correctly.</li>
-        <li><b>Review.</b> After you pass a lesson, its rule comes back every few days as a short question with new numbers. One try, then the answer shows. When one is due, the page opens there first; it is never more than three a day. A rule counts as learned once you get it right on three separate days.</li>
+        <li><b>Review.</b> After you pass a lesson, its rule comes back every few days as a short question with new numbers. One try, then the answer shows. When one is due, the page opens there first; it is never more than three a day. A rule counts as learned once you get it right on three separate days. The dots next to each cheat-sheet rule show how far it got: seen, got it once, got it again on a later day, learned.</li>
+        <li><b>That's today.</b> Once the review due today is done and you have finished a lesson, the page says so and names the next review day. <b>I want more</b> opens a few extra review items.</li>
+        <li><b>Progress.</b> The bar under the goal counts passed lessons, and the first lesson once you answer it. The small calendar fills a square for each day you practiced: the day's review done, or 3 questions answered. The streak counts those days. One day off does not end it; after two days off, an extra review set the next day carries it on.</li>
       </ul>
       <nav class="pager"></nav>
     </section>
@@ -468,18 +494,18 @@
   var HELP = { '3': 'worked example', '2': 'outline', '1': 'bare', '0': 'your check' };
   var TYPE = { probe: "where you're at", concept: 'concept', drill: 'drill' };
   var lessonItems = Array.prototype.slice.call(side.querySelectorAll('.item[href^="#l"]'));
-  var passed = 0;
   lessonItems.forEach(function (a, i) {
     var sec = document.getElementById(a.getAttribute('href').slice(1));
     if (!sec) {
       var span = document.createElement('span');
       span.className = 'item'; span.setAttribute('data-status', 'planned'); span.innerHTML = a.innerHTML;
+      span._lesson = true;   /* planned: counts toward the plan, never as done */
       a.parentNode.replaceChild(span, a);
       return;
     }
+    a._lesson = sec;
     var status = sec.getAttribute('data-status') || 'active';
     a.setAttribute('data-status', status);
-    if (status === 'passed') passed += 1;
     var strip = sec.querySelector('.strip');
     if (strip && !strip.children.length) {
       var parts = ['<span><b>Lesson ' + i + '</b> of ' + lessonItems.length + '</span>',
@@ -490,11 +516,6 @@
       strip.innerHTML = parts.join('');
     }
   });
-  var progress = document.getElementById('progress');
-  if (progress) {
-    progress.querySelector('.bar i').style.width = Math.round(100 * passed / Math.max(1, lessonItems.length)) + '%';
-    progress.querySelector('span:last-child').textContent = passed + ' of ' + lessonItems.length + ' passed';
-  }
   var links = Array.prototype.slice.call(side.querySelectorAll('a.item'));
 
   /* ---------- router: one section at a time ---------- */
@@ -546,7 +567,8 @@
          (text, correct stays null). history: one entry per option click or Check press, oldest first. Text
          answers add none.
        state, keyed by name, each an object with its own at (see progress records below): finish:<lesson>,
-         resume, session:<date>:<device> (<device> is a short random id kept per browser).
+         resume, session:<date>:<device> (<device> is a short random id kept per browser; optional reviewDone,
+         extra and extraDone, see streak).
      Every at is UTC as toISOString() writes it: YYYY-MM-DDTHH:MM:SS.sssZ. Anything else counts as oldest.
      Merge: the copy with the newer at wins the fields. A tie goes to the larger canonical JSON (sorted keys,
      no spaces, compared as UTF-16 code units), so every copy picks the same one. Answers also join their
@@ -966,9 +988,12 @@
     }
     r.at = at;
     store.put(r);
-    if (attempt && q._section === reviewSection) showReview();
     if (attempt || (typeof fields.value === 'string' && fields.value.trim())) {
-      try { noteAnswer(q); } catch (e) { if (window.console) console.error('learn: progress not recorded', e); }
+      try {
+        noteAnswer(q);
+        if (attempt && q._section === reviewSection) noteReview();
+      } catch (e) { if (window.console) console.error('learn: progress not recorded', e); }
+      showDerived();
     }
   }
 
@@ -977,8 +1002,10 @@
                         until the tutor sets the section's data-graded to this at or later.
        resume           {lesson, q, device, at}: the last item answered, on any device.
        session:<date>:<device>  {date, device, answered: [question ids], finished: [lesson ids], at}: one per
-                        day (the device's own date) and device, updated by each answer and each Finish. The
-                        streak and the return banner read these.
+                        day (the device's own date) and device, updated by each answer and each Finish. Also
+                        reviewDone: true once that day's review list is cleared; extra: true once an extra review
+                        set is opened (I want more, or the repair offer); extraDone: true once it is cleared.
+                        The streak, the calendar, That's today and the return banner read these.
      The device id lives outside the goal's keys, in learn.device, so every goal on this origin shares it. */
   var DEVICE = null;
   function device() {
@@ -1017,13 +1044,19 @@
   }
   function list(x) { return Array.isArray(x) ? x.slice() : []; }
   function sessionKey() { return 'session:' + today() + ':' + device(); }
+  /* today's session record on this device, with fields merged in (reviewDone, extra, extraDone: see streak) */
+  function setSession(fields) {
+    var key = sessionKey(), s = store.state(key) || {}, k;
+    var f = { date: today(), device: device(), answered: list(s.answered), finished: list(s.finished) };
+    for (k in fields) f[k] = fields[k];
+    setState(key, f);
+  }
   function noteSession(field, id) {
-    var key = sessionKey(), s = store.state(key) || {}, ids = list(s[field]);
+    var s = store.state(sessionKey()) || {}, ids = list(s[field]), f = {};
     if (ids.indexOf(id) >= 0) return;
     ids.push(id);
-    var f = { date: today(), device: device(), answered: list(s.answered), finished: list(s.finished) };
     f[field] = ids;
-    setState(key, f);
+    setSession(f);
   }
   var answeredHere = false;
   function noteAnswer(q) {
@@ -1082,6 +1115,7 @@
         var correct = key === answer;
         locked = correct || once;
         apply(key, correct);
+        if (correct) fb.classList.add('now');   /* the quiet check mark, only as it happens */
         record(q, { value: key, correct: correct }, true);
         updateScore(q._section);
       });
@@ -1131,6 +1165,7 @@
       clearTimeout(timer); timer = null;
       var correct = matches(input.value);
       show(correct);
+      if (correct) fb.classList.add('now');
       record(q, { value: input.value.trim(), correct: correct, draft: undefined }, true);
       updateScore(q._section);
     }
@@ -1312,6 +1347,7 @@
       setState('finish:' + section.id, { lesson: section.id, device: device() }, true);
       noteSession('finished', section.id);
       box._pressed = true;
+      showDerived();
       var s = store.status();
       if (s.tier === 'local') {
         var text = finishJSON(section);
@@ -1342,7 +1378,7 @@
   /* ---------- today's review: due items first, at most one per rule and REVIEW_MAX a day ----------
      An item is answered once (data-once). One answered today stays shown with its answer; one answered on an
      earlier day is hidden until the tutor replaces it with a fresh version. The tutor owns data-due. */
-  var REVIEW_MAX = 3, DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+  var REVIEW_MAX = 3, EXTRA = 3, DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
       MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var reviewLink = document.getElementById('review-link'), reviewState = reviewSection && reviewSection.querySelector('.review-state');
   function reviewItems() {
@@ -1354,8 +1390,9 @@
     return t > -Infinity ? dateOf(new Date(t)) : '';
   }
   function todays() {
-    var now = today(), n = dayNumber(now), items = reviewItems(), out = { done: [], todo: [], more: false, next: null, count: items.length };
-    var ruleDone = {}, due = [];
+    var now = today(), n = dayNumber(now), items = reviewItems(), extra = sessionOn(now).extra;
+    var out = { done: [], todo: [], more: false, next: null, count: items.length, spare: 0, extra: extra };
+    var ruleDone = {}, open = [], spare = {};
     items.forEach(function (q, i) {
       var d = store.get(q.getAttribute('data-q'));
       if (d && d.value != null && String(d.value).trim() !== '') {
@@ -1363,16 +1400,22 @@
         return;
       }
       var day = q.getAttribute('data-due');
-      if (dayNumber(day) <= n) due.push({ q: q, day: day, i: i });
-      else if (!out.next || day < out.next) out.next = day;
+      open.push({ q: q, day: day, i: i, due: dayNumber(day) <= n });
     });
-    due.sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : a.i - b.i; });
-    due.forEach(function (x) {
+    open.sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : a.i - b.i; });
+    /* the extra set (I want more, or a streak's repair set) lifts the cap by EXTRA and may take items not due yet */
+    var cap = REVIEW_MAX + (extra ? EXTRA : 0);
+    open.forEach(function (x) {
       var rule = x.q.getAttribute('data-rule');
-      if (ruleDone[rule] || out.done.length + out.todo.length >= REVIEW_MAX) { out.more = true; return; }
-      ruleDone[rule] = true;
-      out.todo.push(x.q);
+      if (!ruleDone[rule] && (x.due || extra) && out.done.length + out.todo.length < cap) {
+        ruleDone[rule] = true;
+        out.todo.push(x.q);
+      } else if (x.due) out.more = true;
+      else if (!out.next || x.day < out.next) out.next = x.day;
     });
+    /* how many items an extra set would add now: one per rule not shown today */
+    open.forEach(function (x) { if (!ruleDone[x.q.getAttribute('data-rule')]) spare[x.q.getAttribute('data-rule')] = true; });
+    out.spare = extra ? 0 : Math.min(EXTRA, Object.keys(spare).length);
     return out;
   }
   function when(day) {
@@ -1391,14 +1434,17 @@
       if (t.todo.length) reviewLink.setAttribute('data-status', 'active'); else reviewLink.removeAttribute('data-status');
     }
     if (!reviewState) return;
+    var end = thatsToday(t), offer = !t.todo.length && offerText(t);
     var text = !t.count ? 'Nothing to review yet. A rule comes here after you pass its lesson.'
       : t.todo.length ? t.todo.length + (t.todo.length === 1 ? ' item' : ' items') + ' to do today.'
-      : (t.done.length ? 'Done for today.' : 'Nothing due today.') +
+      : (end ? "That's today." : t.done.length ? 'Done for today.' : 'Nothing due today.') +
         (t.more ? ' More tomorrow.' : t.next ? ' Next review ' + when(t.next) + '.' : '');
-    var lesson = !t.todo.length && document.getElementById(lessonId());
-    if (reviewState._text === text + (lesson ? lesson.id : '')) return;
-    reviewState._text = text + (lesson ? lesson.id : '');
+    var lesson = !t.todo.length && !end && document.getElementById(lessonId());
+    var key = text + (lesson ? lesson.id : '') + '|' + (offer || '');
+    if (reviewState._text === key) return;
+    reviewState._text = key;
     reviewState.textContent = text;
+    if (offer) moreButton(reviewState, offer);
     if (lesson && lesson.classList.contains('lesson')) {
       var a = document.createElement('a');
       a.href = '#' + lesson.id; a.textContent = titleOf(lesson);
@@ -1407,6 +1453,200 @@
       reviewState.appendChild(document.createTextNode('.'));
     }
   }
+
+  /* ---------- practice days, streak and calendar, from the session log ----------
+     A practice day: the day's due review was finished, or 3 or more questions were answered, on any device.
+     The streak counts practice days; one day off between two of them is fine, two in a row end it. The day after
+     those two, an extra review set (reviewDone and extraDone on that day's session) carries the streak on. Nothing
+     says a streak ended: the count quietly starts again, and the calendar keeps every day. */
+  function sessionOn(date) {
+    var s = { answered: {}, finished: {}, reviewDone: false, extra: false, extraDone: false };
+    store.stateKeys().forEach(function (k) {
+      var r = store.state(k);
+      if (k.indexOf('session:') !== 0 || !r || r.date !== date) return;
+      list(r.answered).forEach(function (id) { if (typeof id === 'string') s.answered[id] = true; });
+      list(r.finished).forEach(function (id) { if (typeof id === 'string') s.finished[id] = true; });
+      ['reviewDone', 'extra', 'extraDone'].forEach(function (f) { if (r[f] === true) s[f] = true; });
+    });
+    return s;
+  }
+  function practiced(s) { return s.reviewDone || Object.keys(s.answered).length >= 3; }
+  function practiceDays() {
+    var seen = {}, out = [];
+    store.stateKeys().forEach(function (k) {
+      var r = store.state(k), n = r && dayNumber(r.date);
+      if (k.indexOf('session:') !== 0 || isNaN(n) || seen[r.date]) return;
+      seen[r.date] = true;
+      var s = sessionOn(r.date);
+      if (practiced(s)) out.push({ date: r.date, n: n, repaired: s.extraDone });
+    });
+    return out.sort(function (a, b) { return b.n - a.n; });   /* newest first */
+  }
+  /* the practice days in the run that ends at days[i] */
+  function runFrom(days, i) {
+    var run = 1;
+    for (; i + 1 < days.length; i++) {
+      var gap = days[i].n - days[i + 1].n;
+      if (gap <= 2 || (gap === 3 && days[i].repaired)) run += 1; else break;
+    }
+    return run;
+  }
+  /* count: the streak now. repair: the run an extra review set today would carry on, else 0 */
+  function streak() {
+    var n = dayNumber(today()), days = practiceDays().filter(function (d) { return d.n <= n; });
+    if (!days.length) return { count: 0, repair: 0 };
+    var count = n - days[0].n <= 2 ? runFrom(days, 0) : 0;
+    var before = days[0].n === n ? 1 : 0, repair = 0;
+    if (days[before] && n - days[before].n === 3 && !(days[0].n === n && days[0].repaired)) repair = runFrom(days, before);
+    return { count: count, repair: repair };
+  }
+  function dayText(n) {
+    var d = new Date(n * 864e5);
+    return DAYS[d.getUTCDay()] + ' ' + d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()];
+  }
+  var practice = null;
+  function showPractice() {
+    if (!practice) {
+      practice = document.getElementById('practice');
+      if (!practice) {
+        practice = document.createElement('div');
+        practice.id = 'practice';
+        var after = document.getElementById('progress');
+        side.insertBefore(practice, after ? after.nextSibling : side.firstChild);
+      }
+      practice.className = 'practice';
+      practice.innerHTML = '<div class="cal" role="img"></div><div class="streak"></div>';
+    }
+    var n = dayNumber(today()), on = {}, s = streak(), shown = Math.max(s.count, s.repair);
+    practiceDays().forEach(function (d) { on[d.n] = true; });
+    /* the last 5 weeks, a row per week from Monday, today in the last row */
+    var first = n - (new Date(n * 864e5).getUTCDay() + 6) % 7 - 28, cells = [], count = 0;
+    for (var x = first; x < first + 35; x++) {
+      var cls = x > n ? 'later' : (on[x] ? 'on' : '') + (x === n ? ' today' : '');
+      if (on[x] && x <= n) count += 1;
+      cells.push('<i class="' + cls.trim() + '" title="' + dayText(x) + (on[x] ? ', practiced' : '') + '"></i>');
+    }
+    var cal = practice.querySelector('.cal'), html = cells.join('');
+    if (cal._html !== html) { cal._html = html; cal.innerHTML = html; }
+    cal.setAttribute('aria-label', 'Practice calendar, last 5 weeks: ' + count + (count === 1 ? ' day' : ' days') + ' practiced');
+    say(practice.querySelector('.streak'), shown ? 'Streak: ' + shown + (shown === 1 ? ' day' : ' days') : '');
+  }
+
+  /* ---------- finish line for today: the due review and one finished lesson ---------- */
+  function thatsToday(t) { return !t.todo.length && Object.keys(sessionOn(today()).finished).length > 0; }
+  /* the extra review set on offer now, if any: "I want more" after That's today, or a streak's repair set */
+  function offerText(t) {
+    if (t.extra || !t.spare) return null;
+    if (thatsToday(t)) return { label: 'I want more', text: '' };
+    var r = streak().repair;
+    if (r >= 2) return { label: 'Extra review', text: ' An extra review set today (' + t.spare + (t.spare === 1 ? ' item' : ' items') +
+      ') carries on your ' + r + '-day streak.' };
+    return null;
+  }
+  function moreButton(el, offer) {
+    if (offer.text) el.appendChild(document.createTextNode(offer.text));
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'check more'; b.textContent = offer.label;
+    b.addEventListener('click', wantMore);
+    el.appendChild(document.createTextNode(' '));
+    el.appendChild(b);
+  }
+  function wantMore() {
+    setSession({ extra: true });
+    showDerived();
+    if (location.hash === '#review') render(); else location.hash = '#review';
+  }
+  /* on the lesson the page opens at: That's today, or the repair offer */
+  var todayCard = null;
+  function showToday() {
+    var t = todays(), end = thatsToday(t), offer = offerText(t), sec = document.getElementById(lessonId());
+    if ((!end && !offer) || !sec || !sec.classList.contains('lesson')) { if (todayCard) todayCard.hidden = true; return; }
+    var text = (end ? "That's today." + (t.more ? ' More review tomorrow.' : t.next ? ' Next review ' + when(t.next) + '.' : '') : '');
+    var key = text + '|' + (offer ? offer.label + offer.text : '');
+    if (!todayCard) { todayCard = document.createElement('p'); todayCard.className = 'banner today'; todayCard.setAttribute('role', 'status'); }
+    var strip = sec.querySelector('.strip');
+    if (todayCard.parentNode !== sec) sec.insertBefore(todayCard, strip ? strip.nextSibling : sec.firstChild);
+    todayCard.hidden = false;
+    if (todayCard._key === key) return;
+    todayCard._key = key;
+    todayCard.textContent = text.trim();
+    if (offer) moreButton(todayCard, text ? offer : { label: offer.label, text: offer.text.trim() });
+  }
+  /* a review answer that clears today's list marks the day's review done (and the extra set, when it was on) */
+  function noteReview() {
+    var t = todays();
+    if (t.todo.length || !t.done.length) return;
+    setSession(t.extra ? { reviewDone: true, extraDone: true } : { reviewDone: true });
+  }
+
+  /* ---------- progress toward the goal and each topic: passed lessons, plus a probe once answered ---------- */
+  var plan = [];
+  (function () {
+    var group = null;
+    Array.prototype.forEach.call(side.children, function (el) {
+      if (el.classList.contains('group')) group = el;
+      else if (el._lesson) plan.push({ sec: el._lesson === true ? null : el._lesson, group: group });
+    });
+  })();
+  function counted(sec) {
+    if (!sec) return false;
+    if (sec.getAttribute('data-status') === 'passed') return true;
+    return sec.getAttribute('data-type') === 'probe' &&
+      Array.prototype.some.call(sec.querySelectorAll('.q'), function (q) { return !q._broken && answered(q); });
+  }
+  function showProgress() {
+    var done = 0, groups = [], by = {};
+    plan.forEach(function (p) {
+      var c = counted(p.sec);
+      if (c) done += 1;
+      if (!p.group) return;
+      var i = groups.indexOf(p.group);
+      if (i < 0) { groups.push(p.group); by[groups.length - 1] = [0, 0]; i = groups.length - 1; }
+      by[i][1] += 1; if (c) by[i][0] += 1;
+    });
+    var progress = document.getElementById('progress');
+    if (progress) {
+      progress.querySelector('.bar i').style.width = Math.round(100 * done / Math.max(1, plan.length)) + '%';
+      say(progress.querySelector('span:last-child'), done + ' of ' + plan.length + ' lessons');
+    }
+    if (groups.length < 2) return;   /* one topic: the goal's bar says it all */
+    groups.forEach(function (g, i) {
+      var span = g.querySelector('.topic-count');
+      if (!span) { span = document.createElement('span'); span.className = 'topic-count'; g.appendChild(span); }
+      say(span, ' · ' + by[i][0] + ' of ' + by[i][1]);
+    });
+  }
+
+  /* ---------- the finish moment: on the next lesson, what the passed one lets the learner do ---------- */
+  var passedNote = null;
+  function showPassed() {
+    var sec = document.getElementById(lessonId()), i = sections.indexOf(sec), can = null, prev = null;
+    if (sec && sec.classList.contains('lesson') && sec.getAttribute('data-status') === 'active' &&
+        !Array.prototype.some.call(sec.querySelectorAll('.q'), answered)) {
+      for (var j = i - 1; j >= 0 && !prev; j--) if (sections[j].classList.contains('lesson')) prev = sections[j];
+      can = prev && prev.getAttribute('data-status') === 'passed' && prev.querySelector('.can');
+    }
+    if (!can || !can.textContent.trim()) { if (passedNote) passedNote.hidden = true; return; }
+    if (!passedNote) { passedNote = document.createElement('p'); passedNote.className = 'banner passed'; }
+    var strip = sec.querySelector('.strip');
+    if (passedNote.parentNode !== sec) sec.insertBefore(passedNote, strip ? strip.nextSibling : sec.firstChild);
+    passedNote.hidden = false;
+    say(passedNote, 'Passed: ' + titleOf(prev) + '. ' + can.textContent.trim());
+  }
+
+  /* ---------- rule strength on the cheat sheet: data-level, which only the tutor writes ---------- */
+  var LEVEL = ['seen', 'got it once', 'got it again on a later day', 'learned'];
+  Array.prototype.forEach.call(document.querySelectorAll('#cheat li[data-rule]'), function (li) {
+    var n = Math.max(0, Math.min(3, parseInt(li.getAttribute('data-level'), 10) || 0)), dots = document.createElement('span');
+    dots.className = 'dots'; dots.setAttribute('aria-hidden', 'true');
+    for (var k = 0; k < 3; k++) dots.appendChild(document.createElement('i')).className = k < n ? 'on' : '';
+    li.insertBefore(dots, li.firstChild);
+    var label = document.createElement('span');
+    label.className = 'level'; label.textContent = '(' + LEVEL[n] + ')';
+    li.appendChild(label);
+  });
+
+  function showDerived() { showReview(); showProgress(); showPractice(); showToday(); showPassed(); }
 
   /* ---------- return banner: after two or more days away, how far this lesson got ---------- */
   function lastDay() {
@@ -1499,9 +1739,9 @@
     showFinish();
   }
   function rehydrate(name, ids) {
-    if (name === 'state') { showFinish(); showBanner(); return; }
+    if (name === 'state') { showFinish(); showBanner(); showDerived(); return; }
     if (name !== 'answers') return;
-    showReview();
+    showDerived();
     var touched = [];
     ids.forEach(function (id) {
       var q = byId[id];
@@ -1515,7 +1755,7 @@
   /* ---------- hydrate from this device at once, then from the store when it answers ---------- */
   window.addEventListener('hashchange', render);
   questions.forEach(hydrate);
-  showReview();
+  showDerived();
   render();   /* after the store and the review, so the page can open at the review or the resume point */
   sections.forEach(updateScore);
   showBanner();

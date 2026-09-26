@@ -447,11 +447,7 @@ def cmd_run(args):
         pass
     finally:
         httpd.server_close()
-        if read_pid(root) == os.getpid():
-            try:
-                os.unlink(os.path.join(root, PID_FILE))
-            except OSError:
-                pass
+        drop_pid(root, os.getpid())
     return 0
 
 
@@ -462,6 +458,15 @@ def read_pid(root):
             return int(f.read().strip())
     except (OSError, ValueError):
         return None
+
+
+def drop_pid(root, pid):
+    """Remove the pid file if it still names pid, and not a server that started since (a login job's restart)."""
+    if read_pid(root) == pid:
+        try:
+            os.unlink(os.path.join(root, PID_FILE))
+        except OSError:
+            pass
 
 
 def is_ours(pid):
@@ -501,7 +506,7 @@ def whoami(port, token, timeout=2.0):
         return None
 
 
-def answers(root, port, token, wait=0.0):
+def serving(root, port, token, wait=0.0):
     """Whether the server on port answers for root, asking again for up to wait seconds."""
     end = time.monotonic() + wait
     while True:
@@ -573,20 +578,17 @@ def cmd_ensure(args):
                 out["note"] = note
             return say(out)
 
-        if answers(root, saved, token):
+        if serving(root, saved, token):
             return running(saved, False)
         pid = read_pid(root)
         if is_ours(pid):
             # a server of ours that does not answer yet: give it a moment, never move its port from under it
-            if answers(root, saved, token, wait=5):
+            if serving(root, saved, token, wait=5):
                 return running(saved, False)
             return say({"ok": False, "pid": pid, "error": "the server (pid %d) does not answer; "
                         "run `serve.py stop --root %s`, then ensure again" % (pid, root)}, 2)
         if pid is not None:
-            try:
-                os.unlink(os.path.join(root, PID_FILE))   # left by a server that died
-            except OSError:
-                pass
+            drop_pid(root, pid)   # left by a server that died
         port, note = saved, None
         for _ in range(3):
             info = spawn(root, port)
@@ -594,12 +596,12 @@ def cmd_ensure(args):
                 return say({"ok": False, "error": "the server did not start; see %s" % os.path.join(root, LOG_FILE)}, 2)
             if info.get("ok"):
                 port = info["port"]
-                if not answers(root, port, token, wait=5):
+                if not serving(root, port, token, wait=5):
                     return say({"ok": False, "error": "the server started but does not answer; see %s"
                                 % os.path.join(root, LOG_FILE)}, 2)
                 return running(port, True, note)
             # the port is taken; by a server of ours that started meanwhile (a login job), or by another program
-            if answers(root, port, token, wait=1):
+            if serving(root, port, token, wait=1):
                 return running(port, False)
             port = free_port(port)
             note = ("port %d is taken by another program, so the server moved to a new port: "
@@ -612,10 +614,7 @@ def cmd_stop(args):
     pid = read_pid(root)
     if not is_ours(pid):
         if pid is not None:
-            try:
-                os.unlink(os.path.join(root, PID_FILE))
-            except OSError:
-                pass
+            drop_pid(root, pid)
         return say({"ok": True, "note": "no server was running"})
     os.kill(pid, signal.SIGTERM)
     end = time.monotonic() + 10
@@ -623,10 +622,7 @@ def cmd_stop(args):
         if time.monotonic() >= end:
             return say({"ok": False, "pid": pid, "error": "the server did not stop"}, 2)
         time.sleep(0.1)
-    try:
-        os.unlink(os.path.join(root, PID_FILE))   # Windows ends the process without running its cleanup
-    except OSError:
-        pass
+    drop_pid(root, pid)   # Windows ends the process without running its cleanup
     return say({"ok": True, "stopped": pid})
 
 

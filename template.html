@@ -21,6 +21,9 @@
       mc:  .q[data-answer=key] > .opts > button.opt[data-key][data-why]
       num: .q[data-answer="35|35.0|7/2"][data-why][data-hint] > .row > input + button.check, then .fb
       text: textarea + .save
+      predict: an mc or num with data-once (one attempt, then it locks and shows the answer; the first form in
+        data-answer is the one shown) and a .reveal[hidden] after .fb that opens after the attempt, right or wrong.
+        A concept lesson opens with one; its picture goes in the .reveal.
     .feedback[hidden]                       under every question; the tutor fills it after grading and removes hidden
     section#cheat                           passed rules only
 
@@ -190,6 +193,7 @@
   .fb { margin-top: 10px; font-size: .95rem; min-height: 1.2em; }
   .fb.good { color: var(--good); }
   .fb.bad { color: var(--bad); }
+  .reveal { margin-top: 14px; }
   .save { display: block; margin-top: 6px; font: 12px var(--mono); color: var(--muted); min-height: 1em; }
   .feedback { margin-top: 14px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: .97rem; }
   .feedback .kind { color: var(--muted); }
@@ -302,33 +306,39 @@
       <nav class="pager"></nav>
     </section>
 
-    <!-- ============ Sample concept lesson: picture, under 120 words, 2 to 4 interview questions. ============ -->
+    <!-- ============ Sample concept lesson: one predict item, the picture as its reveal, under 120 words, 2 or 3 questions. ============ -->
     <section id="l01" class="lesson" data-type="concept" data-status="active" data-help="2">
       <header class="strip"></header>
       <h1>[Concept title]</h1>
 
-      <figure class="anchor">
-        <!-- Inline SVG drawn with this lesson's real numbers. Use the CSS tokens (var(--accent), var(--ink), var(--muted), var(--rule), var(--bad)) so it reads in both themes. -->
-        <svg viewBox="0 0 640 200" role="img" aria-label="[what the picture shows]">
-          <rect x="20" y="40" width="600" height="120" rx="8" fill="none" stroke="var(--rule)" stroke-width="2"></rect>
-          <text x="320" y="106" text-anchor="middle" fill="var(--muted)" font-family="var(--mono)" font-size="14">[picture]</text>
-        </svg>
-        <figcaption>[One sentence that points at one feature of the picture.]</figcaption>
-      </figure>
-
-      <p>[Under 120 words in total. Simple words, one idea per sentence, define a term at first use, cite the source section.]</p>
-
-      <div class="q" data-q="l01-q1" data-kind="text">
-        <span class="kind">explain</span>
-        <p class="prompt">[Explain it back in your own words.]</p>
-        <textarea id="l01-q1" rows="4"></textarea>
-        <span class="save"></span>
+      <div class="q" data-q="l01-q1" data-kind="mc" data-answer="b" data-once>
+        <span class="kind">predict</span>
+        <p class="prompt">[Before the lesson: what do you think happens? A guess is fine. One try, then the picture opens.]</p>
+        <div class="opts">
+          <button class="opt" type="button" data-key="a" data-why="[why this is wrong]"><span class="key">a</span>[option]</button>
+          <button class="opt" type="button" data-key="b" data-why="[why this is right]"><span class="key">b</span>[option]</button>
+          <button class="opt" type="button" data-key="c" data-why="[why this is wrong]"><span class="key">c</span>[option]</button>
+          <button class="opt" type="button" data-key="d" data-why="[why this is wrong]"><span class="key">d</span>[option]</button>
+        </div>
+        <div class="fb"></div>
+        <div class="reveal" hidden>
+          <figure class="anchor">
+            <!-- Inline SVG drawn with this lesson's real numbers. Use the CSS tokens (var(--accent), var(--ink), var(--muted), var(--rule), var(--bad)) so it reads in both themes. -->
+            <svg viewBox="0 0 640 200" role="img" aria-label="[what the picture shows]">
+              <rect x="20" y="40" width="600" height="120" rx="8" fill="none" stroke="var(--rule)" stroke-width="2"></rect>
+              <text x="320" y="106" text-anchor="middle" fill="var(--muted)" font-family="var(--mono)" font-size="14">[picture]</text>
+            </svg>
+            <figcaption>[One sentence that points at one feature of the picture.]</figcaption>
+          </figure>
+        </div>
         <div class="feedback" hidden></div>
       </div>
 
+      <p>[Under 120 words in total. Simple words, one idea per sentence, define a term at first use, cite the source section.]</p>
+
       <div class="q" data-q="l01-q2" data-kind="text">
-        <span class="kind">predict</span>
-        <p class="prompt">[Predict or apply, with the lesson's numbers changed.]</p>
+        <span class="kind">explain</span>
+        <p class="prompt">[Explain it back in your own words.]</p>
         <textarea id="l01-q2" rows="4"></textarea>
         <span class="save"></span>
         <div class="feedback" hidden></div>
@@ -336,7 +346,7 @@
 
       <div class="q" data-q="l01-q3" data-kind="text">
         <span class="kind">break it</span>
-        <p class="prompt">[A wrong claim to break: name what it gets wrong and give one concrete case.]</p>
+        <p class="prompt">[A wrong claim to break: name what it gets wrong and give one concrete case. Or an apply item as mc or num, when one answer is right.]</p>
         <textarea id="l01-q3" rows="4"></textarea>
         <span class="save"></span>
         <div class="feedback" hidden></div>
@@ -346,7 +356,7 @@
       <nav class="pager"></nav>
     </section>
 
-    <!-- ============ Sample drill: picture or worked table, then 8 to 12 auto-checked items. ============ -->
+    <!-- ============ Sample drill: picture or worked table, then 5 or 6 auto-checked items. ============ -->
     <section id="l02" class="lesson" data-type="drill" data-status="active" data-help="2">
       <header class="strip"></header>
       <h1>[Drill title]</h1>
@@ -400,8 +410,8 @@
       <h1>How this works</h1>
       <ul>
         <li><b>One page per goal.</b> Lessons are listed in the sidebar in order, grouped by topic. A filled dot is passed, a ringed dot is the one to do now, grey is not written yet.</li>
-        <li><b>Picture first.</b> Read the picture before the words. The caption points at the one thing to look at.</li>
-        <li><b>Two kinds of lesson.</b> A concept lesson ends with questions you answer in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
+        <li><b>Guess first.</b> A concept lesson opens with one question you answer before it teaches anything. You get one try, and a wrong guess costs nothing: it makes the picture that opens next easier to remember. The caption points at the one thing to look at.</li>
+        <li><b>Two kinds of lesson.</b> A concept lesson ends with a few questions, at least one in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
         <li><b>Your answers save as you type.</b> When the page is served from your computer, or hosted by a tool that can store them, they are saved there and reach your other devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which. If some answers are not sent yet, it says how many, and Copy answers appears on the lesson.</li>
         <li><b>When you finish a lesson, press Finish lesson.</b> The tutor grades finished lessons first thing on its next run: feedback appears under each question, the next lesson unlocks, and the vault note gets the record. Until then the lesson says it is waiting for the tutor. On a local page, Finish lesson also copies a block: paste it in the terminal with <code>done</code>. Saying <code>done</code> on its own works too.</li>
         <li><b>The page remembers where you stopped,</b> on every device, and opens there. Back after a few days away, a line at the top says how far you got and which question is next.</li>
@@ -999,31 +1009,43 @@
     return v;
   }
 
+  /* data-once: one attempt, then the item locks and shows the answer. A .reveal inside an mc or num
+     item opens after the first attempt, right or wrong. */
+  function reveal(q) {
+    var r = q.querySelector('.reveal');
+    if (r) r.hidden = false;
+  }
+
   function bindMC(q) {
-    var answer = attr(q, 'data-answer');
+    var answer = attr(q, 'data-answer'), once = q.hasAttribute('data-once');
     var opts = Array.prototype.slice.call(q.querySelectorAll('.opt'));
     var fb = part(q, '.fb');
     if (!opts.length) throw new Error('missing .opt');
+    var right = opts.filter(function (o) { return o.getAttribute('data-key') === answer; })[0];
+    if (!right) throw new Error('data-answer names no option');
     var locked = false;
     function apply(key, correct) {
       opts.forEach(function (o) {
         var mine = o.getAttribute('data-key') === key;
-        o.classList.toggle('right', mine && correct);
+        o.classList.toggle('right', (mine && correct) || (once && o === right));
         o.classList.toggle('wrong', mine && !correct);
-        o.disabled = correct;
+        o.disabled = correct || once;
       });
       var chosen = opts.filter(function (o) { return o.getAttribute('data-key') === key; })[0];
       var why = chosen ? (chosen.getAttribute('data-why') || '') : '';
-      fb.textContent = (correct ? 'Correct. ' : 'Not this one. ') + why;
+      var text = (correct ? 'Correct. ' : 'Not this one. ') + why;
+      if (once && !correct) text += ' The answer is ' + answer + '. ' + (right.getAttribute('data-why') || '');
+      fb.textContent = text.trim();
       fb.className = 'fb ' + (correct ? 'good' : 'bad');
       q.classList.toggle('correct', correct);
+      reveal(q);
     }
     opts.forEach(function (o) {
       o.addEventListener('click', function () {
         if (locked) return;
         var key = o.getAttribute('data-key');
         var correct = key === answer;
-        locked = correct;
+        locked = correct || once;
         apply(key, correct);
         record(q, { value: key, correct: correct }, true);
         updateScore(q._section);
@@ -1031,7 +1053,7 @@
     });
     q._hydrate = function (d) {
       if (!d || d.value == null) return;
-      locked = !!d.correct;
+      locked = !!d.correct || once;
       apply(d.value, !!d.correct);
     };
   }
@@ -1039,8 +1061,8 @@
   function bindNum(q) {
     var id = q.getAttribute('data-q');
     var input = part(q, 'input'), btn = part(q, 'button.check'), fb = part(q, '.fb');
-    var answers = attr(q, 'data-answer').split('|').map(norm);
-    var timer = null;
+    var forms = attr(q, 'data-answer').split('|'), answers = forms.map(norm);
+    var once = q.hasAttribute('data-once'), timer = null;
     function norm(s) { return String(s).trim().toLowerCase().replace(/\s+/g, '').replace(/,/g, ''); }
     function toNumber(s) {
       if (/^-?\d+\/\d+$/.test(s)) { var f = s.split('/'); return Number(f[1]) ? Number(f[0]) / Number(f[1]) : null; }
@@ -1054,10 +1076,13 @@
       return answers.some(function (a) { var y = toNumber(a); return y !== null && Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(y)); });
     }
     function show(correct) {
-      fb.textContent = correct ? 'Correct. ' + (q.getAttribute('data-why') || '') : 'Not yet. ' + (q.getAttribute('data-hint') || '');
+      var why = q.getAttribute('data-why') || '';
+      fb.textContent = (correct ? 'Correct. ' + why : once ? 'Not this one. The answer is ' + forms[0].trim() + '. ' + why :
+        'Not yet. ' + (q.getAttribute('data-hint') || '')).trim();
       fb.className = 'fb ' + (correct ? 'good' : 'bad');
       q.classList.toggle('correct', correct);
-      input.readOnly = correct; btn.disabled = correct;
+      input.readOnly = btn.disabled = correct || once;
+      reveal(q);
     }
     /* the box's unchecked text is kept as draft; the tutor ignores it */
     function saveDraft() {
@@ -1089,6 +1114,7 @@
   function bindText(q) {
     var id = q.getAttribute('data-q');
     var ta = part(q, 'textarea'), save = part(q, '.save');
+    if (q.querySelector('.reveal')) throw new Error('a .reveal needs an mc or num item');
     var timer = null;
     function commit() {
       clearTimeout(timer); timer = null;
@@ -1119,6 +1145,7 @@
   /* an item the script cannot run says so, and every other item keeps working */
   function broken(q, e) {
     q._broken = true; q._hydrate = q._status = q._flush = null;
+    reveal(q);   /* a picture behind a broken item is still shown */
     if (window.console) console.error('learn: broken item', q, e);
     if (q.querySelector('.broken')) return;
     var sec = q.closest('section');

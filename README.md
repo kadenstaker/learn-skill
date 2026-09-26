@@ -2,7 +2,7 @@
 
 A tutoring skill that teaches one concept at a time. It runs in any coding agent that loads skills from a `SKILL.md`.
 
-Each topic gets a single web page: picture first, few words, then questions with answer boxes. Concept lessons end with questions you answer in your own words and the tutor grades. Drills check themselves as you go. A terse note in your Obsidian vault keeps the record.
+Each goal gets a single web page of short lessons. A concept lesson opens with one guess, then a picture, few words, and questions with answer boxes; at least one you answer in your own words, and the tutor grades it. Drills check themselves as you go. A terse note in your Obsidian vault keeps the record.
 
 ## Install
 

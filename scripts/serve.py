@@ -1354,9 +1354,14 @@ def cmd_merge(args):
 
 
 def cmd_lock(args):
-    goal = goal_dir(args.goal)
+    out, code = take_lock(goal_dir(args.goal), args.owner)
+    return say(out, code)
+
+
+def take_lock(goal, owner=None):
+    """({"ok", ...}, exit code): 0 with the lock taken, 3 while a fresh one is held."""
     path = os.path.join(goal, RUN_LOCK)
-    mine = {"owner": args.owner, "at": now_at(), "host": socket.gethostname()}
+    mine = {"owner": owner, "at": now_at(), "host": socket.gethostname()}
     for _ in range(2):
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1368,7 +1373,7 @@ def cmd_lock(args):
             except (OSError, ValueError):
                 held, age = {}, RUN_LOCK_STALE + 1
             if age <= RUN_LOCK_STALE:
-                return say({"ok": False, "held": held, "age_s": int(age)}, 3)
+                return {"ok": False, "held": held, "age_s": int(age)}, 3
             try:
                 os.unlink(path)   # stale: the run that took it died
             except FileNotFoundError:
@@ -1376,8 +1381,8 @@ def cmd_lock(args):
             continue
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(mine, f)
-        return say({"ok": True, "lock": mine})
-    return say({"ok": False, "error": "could not take the lock"}, 3)
+        return {"ok": True, "lock": mine}, 0
+    return {"ok": False, "error": "could not take the lock"}, 3
 
 
 def cmd_unlock(args):

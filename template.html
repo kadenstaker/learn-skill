@@ -81,7 +81,8 @@
       reloads the page, or shows "New lesson ready" with a Reload button while an answer box has focus,
     a "This item is broken" note on any .q it cannot run (unknown data-kind, a missing part, a bad or repeated data-q,
       or no goal id on the page),
-    on a served goal opened from a file (#app[data-served] on a file:// page), a sync line saying this copy is not connected.
+    on a served goal opened from a file (#app[data-served] on a file:// page), a sync line saying this copy is not connected,
+    on the laptop, when the goal's server also listens on the Wi-Fi (serve.py lan on), the phone link and its QR in the sidebar.
 -->
 <style>
   :root {
@@ -173,6 +174,10 @@
   .item[data-status="active"] .dot { border-color: var(--accent); box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--accent); }
   .item[data-status="planned"] { color: var(--muted); }
   .sync { margin-top: auto; padding-top: 14px; font: 12px var(--mono); color: var(--muted); }
+  .phone { margin-top: 18px; font-size: .85rem; color: var(--muted); }
+  .phone img { display: block; margin: 8px 0; background: #fff; border-radius: 4px; }
+  .phone p { margin: 6px 0 0; overflow-wrap: anywhere; }
+  .phone a { color: var(--accent); }
   .topic-count { font-weight: 400; letter-spacing: 0; text-transform: none; white-space: nowrap; }
   .practice { margin: 4px 0 8px; font: 12px var(--mono); color: var(--muted); }
   .cal { display: grid; grid-template-columns: repeat(7, 12px); gap: 3px; margin: 6px 0 4px; }
@@ -822,6 +827,13 @@
             .then(function (res) { return res.ok ? res.json() : null; })
             .then(function (v) { return v && typeof v.version === 'string' ? v.version : null; }, function () { return null; });
         },
+        /* the goal's phone links when the server also listens on the Wi-Fi (serve.py lan on), else null */
+        phone: function () {
+          return fetch(API + 'phone', { cache: 'no-store', credentials: 'same-origin' })
+            .then(function (res) { return res.ok ? res.json() : null; })
+            .then(function (p) { return p && typeof p.url === 'string' ? { url: p.url, other: typeof p.other === 'string' ? p.other : null, qr: API + 'qr.svg' } : null; },
+                  function () { return null; });
+        },
         /* a refused request (a wrong token, a body too large) or a record format this page does not know */
         final: function (e) { return !!e && (e.code === 'schema' || (e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429)); }
       };
@@ -1056,6 +1068,7 @@
       putState: function (key, r) { put('state', key, r); },
       waiting: function (id) { return tier !== 'local' && id in outbox.answers; },
       version: function () { return adapter && adapter.version ? adapter.version() : Promise.resolve(null); },
+      phone: function () { return adapter && adapter.phone ? adapter.phone() : Promise.resolve(null); },
       status: function () {
         return { tier: tier, detached: detached, readOk: readOk, readFailed: readFailed, sending: sending,
                  pending: Object.keys(outbox.answers).length, pendingState: Object.keys(outbox.state).length };
@@ -2185,5 +2198,22 @@
   });
   checkVersion();
   setInterval(checkVersion, 30000);
+
+  /* ---------- served on the Wi-Fi: the phone link as a QR, on the laptop only ---------- */
+  if (store.status().tier === 'served' && location.hostname === '127.0.0.1') {
+    store.phone().then(function (p) {
+      if (!p) return;
+      var box = document.createElement('div');
+      box.className = 'phone';
+      box.innerHTML = '<span class="eyebrow">On your phone</span><img width="132" height="132" alt="QR code of the phone link">' +
+        '<p>Same home Wi-Fi: scan this, or open <a></a>. Bookmark it, and keep to that one link on the phone.</p><p class="other"></p>';
+      box.querySelector('img').src = p.qr;
+      var a = box.querySelector('a');
+      a.href = a.textContent = p.url;
+      var other = box.querySelector('.other');
+      if (p.other) other.textContent = 'If it does not open: ' + p.other; else other.remove();
+      syncLine.parentNode.insertBefore(box, syncLine);
+    });
+  }
 })();
 </script>

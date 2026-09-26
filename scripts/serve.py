@@ -11,14 +11,16 @@ usage:
   serve.py lock GOAL [--owner NAME]       take GOAL's run lock; exit 3 if a fresh one is held
   serve.py unlock GOAL                    drop GOAL's run lock
   serve.py new-token --root DIR           replace the token (every bookmark then needs the new link)
+  serve.py lan on|off --root DIR          also listen on the local network, for a phone on the same Wi-Fi, or stop
 
 GOAL is a goal folder; FILE is {"schema": 1, "records": {id: record}}, or "-" for stdin. A block is
 {"goal", "lesson", "answers": [record], "state": {key: record}}; "state" comes only from Finish lesson.
 Each command prints one JSON line to stdout; diagnostics go to stderr.
 
 Pages are at http://127.0.0.1:<port>/<token>/<goal-slug>/, with api/answers, api/state and api/version
-beside them, and /<token>/api/whoami. Port and token live in <root>/serve.json (0600) and are kept across
-restarts. Every request needs the token and a Host on the allowlist; nothing else under the root is served.
+beside them, and /<token>/api/whoami. Port, token and lan mode live in <root>/serve.json (0600) and are kept
+across restarts. In lan mode the server listens on every IPv4 interface, also accepts the machine's .local name
+and LAN address as Host, and each goal gains api/phone (the phone links) and api/qr.svg (the first one as a QR). Every request needs the token and a Host on the allowlist; nothing else under the root is served.
 A running server keeps its pid in <root>/serve.pid; one started by `ensure` logs to <root>/serve.log (0600),
 which never holds the token.
 
@@ -29,7 +31,7 @@ The server keeps no copy in memory, so `merge` writes the files directly, runnin
 
 Python 3.7+ standard library only.
 """
-import argparse, errno, hmac, http.client, json, math, os, re, secrets, signal, socket, subprocess, sys, tempfile, threading, time
+import argparse, errno, hmac, http.client, json, math, os, re, secrets, signal, socket, stat, subprocess, sys, tempfile, threading, time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -264,6 +266,269 @@ def merge_into(goal, coll, incoming):
         return out
 
 
+# ---------------------------------------------------------------- QR code (byte mode, error correction M, versions 1-10)
+# Python has no QR encoder, so the phone link's QR is drawn here. Same algorithm as Nayuki's qrcodegen (MIT);
+# serve_check.py compares every version and mask with it module for module.
+QR_ECC = [None, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26]    # error correction codewords per block, level M
+QR_BLOCKS = [None, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5]          # blocks, level M
+QR_MASKS = [lambda x, y: (x + y) % 2 == 0, lambda x, y: y % 2 == 0, lambda x, y: x % 3 == 0,
+            lambda x, y: (x + y) % 3 == 0, lambda x, y: (x // 3 + y // 2) % 2 == 0,
+            lambda x, y: x * y % 2 + x * y % 3 == 0, lambda x, y: (x * y % 2 + x * y % 3) % 2 == 0,
+            lambda x, y: ((x + y) % 2 + x * y % 3) % 2 == 0]
+
+
+def qr_raw_modules(ver):
+    n = (16 * ver + 128) * ver + 64
+    if ver >= 2:
+        k = ver // 7 + 2
+        n -= (25 * k - 10) * k - 55
+        if ver >= 7:
+            n -= 36
+    return n
+
+
+def qr_data_capacity(ver):
+    return qr_raw_modules(ver) // 8 - QR_ECC[ver] * QR_BLOCKS[ver]
+
+
+def gf_mul(x, y):
+    z = 0
+    for i in reversed(range(8)):
+        z = (z << 1) ^ ((z >> 7) * 0x11D)
+        z ^= ((y >> i) & 1) * x
+    return z
+
+
+def rs_divisor(degree):
+    d, root = [0] * (degree - 1) + [1], 1
+    for _ in range(degree):
+        for j in range(degree):
+            d[j] = gf_mul(d[j], root)
+            if j + 1 < degree:
+                d[j] ^= d[j + 1]
+        root = gf_mul(root, 0x02)
+    return d
+
+
+def rs_remainder(data, divisor):
+    r = [0] * len(divisor)
+    for b in data:
+        f = b ^ r.pop(0)
+        r.append(0)
+        for i, c in enumerate(divisor):
+            r[i] ^= gf_mul(c, f)
+    return r
+
+
+def qr_codewords(data, ver):
+    """The data bytes as one byte-mode segment, padded, split into blocks with their error correction, interleaved."""
+    bits = []
+
+    def put(val, n):
+        bits.extend((val >> i) & 1 for i in reversed(range(n)))
+    cap = qr_data_capacity(ver) * 8
+    put(0b0100, 4)
+    put(len(data), 8 if ver <= 9 else 16)
+    for b in data:
+        put(b, 8)
+    put(0, min(4, cap - len(bits)))
+    put(0, -len(bits) % 8)
+    pad = 0xEC
+    while len(bits) < cap:
+        put(pad, 8)
+        pad ^= 0xEC ^ 0x11
+    words = [int("".join(map(str, bits[i:i + 8])), 2) for i in range(0, len(bits), 8)]
+    nblocks, ecclen = QR_BLOCKS[ver], QR_ECC[ver]
+    raw = qr_raw_modules(ver) // 8
+    nshort, shortlen = nblocks - raw % nblocks, raw // nblocks
+    div, blocks, k = rs_divisor(ecclen), [], 0
+    for i in range(nblocks):
+        dat = words[k:k + shortlen - ecclen + (0 if i < nshort else 1)]
+        k += len(dat)
+        ecc = rs_remainder(dat, div)
+        blocks.append(dat + ([0] if i < nshort else []) + ecc)
+    return [blk[i] for i in range(len(blocks[0])) for j, blk in enumerate(blocks)
+            if i != shortlen - ecclen or j >= nshort]
+
+
+def qr_penalty(m):
+    size, score = len(m), 0
+
+    def patterns(h):
+        n = h[1]
+        core = n > 0 and h[2] == h[4] == h[5] == n and h[3] == n * 3
+        return (core and h[0] >= n * 4 and h[6] >= n) + (core and h[6] >= n * 4 and h[0] >= n)
+
+    def add(run, h):
+        if h[0] == 0:
+            run += size
+        h.insert(0, run)
+        del h[7:]
+
+    for lines in (m, [list(c) for c in zip(*m)]):
+        for line in lines:
+            color, run, h = False, 0, [0] * 7
+            for c in line:
+                if c == color:
+                    run += 1
+                    score += 3 if run == 5 else 1 if run > 5 else 0
+                else:
+                    add(run, h)
+                    if not color:
+                        score += patterns(h) * 40
+                    color, run = c, 1
+            if color:
+                add(run, h)
+                run = 0
+            add(run + size, h)
+            score += patterns(h) * 40
+    for y in range(size - 1):
+        for x in range(size - 1):
+            if m[y][x] == m[y][x + 1] == m[y + 1][x] == m[y + 1][x + 1]:
+                score += 3
+    dark, total = sum(map(sum, m)), size * size
+    return score + ((abs(dark * 20 - total * 10) + total - 1) // total - 1) * 10
+
+
+def qr_matrix(text, mask=None, ver=None):
+    """The QR code for text as rows of booleans (True is dark). mask and ver fix the choice, for tests."""
+    data = text.encode("utf-8")
+    if ver is None:
+        ver = next((v for v in range(1, 11) if len(data) + 2 + (v > 9) <= qr_data_capacity(v)), None)
+        if ver is None:
+            raise ValueError("too long for a QR code here: %d bytes" % len(data))
+    size = ver * 4 + 17
+    m = [[False] * size for _ in range(size)]
+    fn = [[False] * size for _ in range(size)]
+
+    def setf(x, y, dark):
+        m[y][x], fn[y][x] = dark, True
+
+    for i in range(size):
+        setf(6, i, i % 2 == 0)
+        setf(i, 6, i % 2 == 0)
+    for cx, cy in ((3, 3), (size - 4, 3), (3, size - 4)):   # finders with their separators
+        for dy in range(-4, 5):
+            for dx in range(-4, 5):
+                x, y = cx + dx, cy + dy
+                if 0 <= x < size and 0 <= y < size:
+                    setf(x, y, max(abs(dx), abs(dy)) not in (2, 4))
+    if ver > 1:
+        k = ver // 7 + 2
+        step = (ver * 8 + k * 3 + 5) // (k * 4 - 4) * 2
+        pos = [6] + sorted(size - 7 - i * step for i in range(k - 1))
+        for i, ax in enumerate(pos):
+            for j, ay in enumerate(pos):
+                if (i, j) not in ((0, 0), (0, k - 1), (k - 1, 0)):
+                    for dy in range(-2, 3):
+                        for dx in range(-2, 3):
+                            setf(ax + dx, ay + dy, max(abs(dx), abs(dy)) != 1)
+
+    def draw_format(mk):
+        d = mk   # level M's format bits are 00
+        r = d
+        for _ in range(10):
+            r = (r << 1) ^ ((r >> 9) * 0x537)
+        b = ((d << 10) | r) ^ 0x5412
+        bit = lambda i: (b >> i) & 1 != 0
+        for i in range(6):
+            setf(8, i, bit(i))
+        setf(8, 7, bit(6))
+        setf(8, 8, bit(7))
+        setf(7, 8, bit(8))
+        for i in range(9, 15):
+            setf(14 - i, 8, bit(i))
+        for i in range(8):
+            setf(size - 1 - i, 8, bit(i))
+        for i in range(8, 15):
+            setf(8, size - 15 + i, bit(i))
+        setf(8, size - 8, True)
+
+    draw_format(0)   # reserve the format areas before placing data
+    if ver >= 7:
+        r = ver
+        for _ in range(12):
+            r = (r << 1) ^ ((r >> 11) * 0x1F25)
+        b = (ver << 12) | r
+        for i in range(18):
+            a, c = size - 11 + i % 3, i // 3
+            setf(a, c, (b >> i) & 1 != 0)
+            setf(c, a, (b >> i) & 1 != 0)
+    words = qr_codewords(data, ver)
+    i, right = 0, size - 1
+    while right >= 1:
+        if right == 6:
+            right = 5
+        for vert in range(size):
+            for j in range(2):
+                x = right - j
+                y = size - 1 - vert if (right + 1) & 2 == 0 else vert
+                if not fn[y][x] and i < len(words) * 8:
+                    m[y][x] = (words[i >> 3] >> (7 - (i & 7))) & 1 != 0
+                    i += 1
+        right -= 2
+
+    def apply(mk):
+        f = QR_MASKS[mk]
+        for y in range(size):
+            for x in range(size):
+                if not fn[y][x] and f(x, y):
+                    m[y][x] = not m[y][x]
+
+    if mask is None:
+        best = None
+        for mk in range(8):
+            apply(mk)
+            draw_format(mk)
+            p = qr_penalty(m)
+            if best is None or p < best[0]:
+                best = (p, mk)
+            apply(mk)
+        mask = best[1]
+    apply(mask)
+    draw_format(mask)
+    return m
+
+
+def qr_svg(text):
+    m = qr_matrix(text)
+    n = len(m) + 8   # 4 modules of quiet zone on each side
+    path = "".join("M%d %dh1v1h-1z" % (x + 4, y + 4) for y, row in enumerate(m) for x, dark in enumerate(row) if dark)
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" shape-rendering="crispEdges">'
+            '<rect width="%d" height="%d" fill="#fff"/><path fill="#000" d="%s"/></svg>' % (n, n, n, n, path))
+
+
+# ---------------------------------------------------------------- the same Wi-Fi (lan mode)
+def lan_ip():
+    """This machine's address on its local network (the interface of the default route), or None when offline."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))   # UDP: sets the route, sends nothing
+        ip = s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+    return None if ip.startswith(("127.", "0.")) else ip
+
+
+def local_name():
+    """The machine's .local name. Only macOS's is known to answer (Bonjour); elsewhere None until checked."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        name = subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return name + ".local" if re.fullmatch(r"[A-Za-z0-9-]{1,63}", name) else None
+
+
+def phone_links(port, token):
+    """(link, other link) a phone on the same Wi-Fi opens: the .local name first, since it survives a new IP."""
+    links = ["http://%s:%d/%s/" % (h, port, token) for h in (local_name(), lan_ip()) if h]
+    return (links + [None, None])[:2]
+
+
 # ---------------------------------------------------------------- config
 def load_config(root, create=True):
     path = os.path.join(root, CONFIG)
@@ -293,10 +558,20 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64   # the default 5 resets a burst of connections, such as a page reload's reads
 
-    def __init__(self, root, port, token):
-        self.root, self.token = root, token
-        super().__init__(("127.0.0.1", port), Handler)
-        self.hosts = {"127.0.0.1:%d" % self.server_address[1]}
+    def __init__(self, root, port, token, lan=False):
+        self.root, self.token, self.lan = root, token, lan
+        super().__init__(("0.0.0.0" if lan else "127.0.0.1", port), Handler)
+        self.port = self.server_address[1]
+        self.hosts = {"127.0.0.1:%d" % self.port}
+        self.name = local_name() if lan else None   # read once: a rename needs a restart
+
+    def allowed(self, host):
+        """127.0.0.1 always; under lan also the .local name and the current LAN address (it can change while running)."""
+        host = (host or "").lower()   # a phone sends the name as typed
+        if host in self.hosts or not self.lan:
+            return host in self.hosts
+        ip = lan_ip()
+        return host in {"%s:%d" % (h.lower(), self.port) for h in (self.name, ip) if h}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -332,7 +607,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def route(self):
         """(slug, what) for an allowed request, or None after refusing it."""
-        if self.headers.get("Host") not in self.server.hosts:
+        if not self.server.allowed(self.headers.get("Host")):
             self.refuse(403, "unknown host")
             return None
         path = self.path.split("?", 1)[0]
@@ -346,7 +621,8 @@ class Handler(BaseHTTPRequestHandler):
             return None, "whoami"
         slug = rest[0]
         tail = "/".join(rest[1:])
-        if not SLUG_RE.fullmatch(slug) or slug in RESERVED or tail not in ("", "index.html", "api/answers", "api/state", "api/version"):
+        pages = ("", "index.html", "api/answers", "api/state", "api/version") + (("api/phone", "api/qr.svg") if self.server.lan else ())
+        if not SLUG_RE.fullmatch(slug) or slug in RESERVED or tail not in pages:
             self.refuse(404, "not found")
             return None
         goal = os.path.join(self.server.root, slug)
@@ -367,8 +643,16 @@ class Handler(BaseHTTPRequestHandler):
         goal, what = r
         try:
             if what == "whoami":
-                return self.reply(200, {"root": self.server.root})
+                return self.reply(200, {"root": self.server.root, "lan": self.server.lan})
             index = os.path.join(goal, "index.html")
+            if what in ("api/phone", "api/qr.svg"):
+                slug = os.path.basename(goal)
+                links = [u + slug + "/" if u else None for u in phone_links(self.server.port, self.server.token)]
+                if what == "api/phone":
+                    return self.reply(200, {"url": links[0], "other": links[1]})
+                if not links[0]:
+                    return self.refuse(404, "not on a network")
+                return self.reply(200, qr_svg(links[0]).encode("utf-8"), "image/svg+xml")
             if what in ("", "index.html"):
                 with open(index, "rb") as f:
                     return self.reply(200, f.read(), "text/html; charset=utf-8")
@@ -388,7 +672,7 @@ class Handler(BaseHTTPRequestHandler):
         if r is None:
             return
         goal, what = r
-        if what not in ("api/answers", "api/state"):
+        if what not in ("api/answers", "api/state"):   # also api/phone and api/qr.svg
             return self.refuse(405, "read only")
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
@@ -432,9 +716,19 @@ def cmd_run(args):
     cfg = load_config(root)
     port = args.port if args.port is not None else cfg.get("port", 0)
     try:
-        httpd = Server(root, port, cfg["token"])
+        st = os.fstat(2)   # a login job's stderr is serve.log, opened by launchd with its own mode
+        if stat.S_ISREG(st.st_mode):
+            os.fchmod(2, 0o600)
+    except (OSError, AttributeError):
+        pass
+    try:
+        httpd = Server(root, port, cfg["token"], cfg["lan"] is True)
     except OSError as e:
         if e.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1)):
+            if whoami(port, cfg["token"]) == root:
+                # our own server already serves this root there (ensure's, while a login job restarts):
+                # nothing to do, and exit 0 so the login job is not started again and again
+                return say({"ok": True, "started": False, "port": port, "root": root})
             return say({"ok": False, "error": "port %d is in use" % port, "port": port}, 2)
         raise
     got = httpd.server_address[1]
@@ -444,7 +738,7 @@ def cmd_run(args):
     write_atomic(os.path.join(root, PID_FILE), ("%d\n" % os.getpid()).encode("ascii"))
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))   # so `finally` drops the pid file
     try:
-        say({"ok": True, "port": got, "root": root, "url": "http://127.0.0.1:%d/%s/" % (got, cfg["token"])})
+        say({"ok": True, "started": True, "port": got, "root": root, "url": "http://127.0.0.1:%d/%s/" % (got, cfg["token"])})
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
@@ -494,6 +788,15 @@ def is_ours(pid):
 
 def whoami(port, token, timeout=2.0):
     """The learning root the server on port answers for, or None."""
+    return (ask_whoami(port, token, timeout) or {}).get("root")
+
+
+def whoami_lan(port, token):
+    """Whether the server on port listens on the LAN, or None when none answers."""
+    return (ask_whoami(port, token) or {}).get("lan")
+
+
+def ask_whoami(port, token, timeout=2.0):
     if not port:
         return None
     try:
@@ -504,7 +807,8 @@ def whoami(port, token, timeout=2.0):
             body = r.read()
         finally:
             c.close()
-        return json.loads(body.decode("utf-8")).get("root") if r.status == 200 else None
+        doc = json.loads(body.decode("utf-8")) if r.status == 200 else None
+        return doc if isinstance(doc, dict) else None
     except (OSError, ValueError, AttributeError, http.client.HTTPException):
         return None
 
@@ -520,12 +824,12 @@ def serving(root, port, token, wait=0.0):
         time.sleep(0.2)
 
 
-def free_port(after):
-    """The first port above after that 127.0.0.1 can bind, else 0 (the system picks)."""
+def free_port(after, lan=False):
+    """The first port above after that the server can bind, else 0 (the system picks)."""
     for p in range(after + 1, min(after + 100, 65536)):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            s.bind(("127.0.0.1", p))
+            s.bind(("0.0.0.0" if lan else "127.0.0.1", p))
             return p
         except OSError:
             continue
@@ -577,6 +881,12 @@ def cmd_ensure(args):
         def running(port, started, note=None):
             out = {"ok": True, "started": started, "pid": read_pid(root), "port": port,
                    "url": "http://127.0.0.1:%d/%s/" % (port, token)}
+            lan = cfg["lan"] is True
+            if lan:
+                out["phone"], out["phone_other"] = phone_links(port, token)
+            if whoami_lan(port, token) not in (None, lan):
+                note = ((note + "; ") if note else "") + ("the running server is not in the mode serve.json names (lan %s): "
+                                                          "run `serve.py stop`, then ensure again" % ("on" if lan else "off"))
             if note:
                 out["note"] = note
             return say(out)
@@ -597,6 +907,8 @@ def cmd_ensure(args):
             info = spawn(root, port)
             if info is None:
                 return say({"ok": False, "error": "the server did not start; see %s" % os.path.join(root, LOG_FILE)}, 2)
+            if info.get("ok") and info.get("started") is False:
+                return running(info["port"], False)   # a login job's server answered meanwhile
             if info.get("ok"):
                 port = info["port"]
                 if not serving(root, port, token, wait=5):
@@ -606,7 +918,7 @@ def cmd_ensure(args):
             # the port is taken; by a server of ours that started meanwhile (a login job), or by another program
             if serving(root, port, token, wait=1):
                 return running(port, False)
-            port = free_port(port)
+            port = free_port(port, cfg["lan"] is True)
             note = ("port %d is taken by another program, so the server moved to a new port: "
                     "bookmarks and any `tailscale serve` mapping need redoing" % saved)
         return say({"ok": False, "error": "no free port found"}, 2)
@@ -733,6 +1045,17 @@ def cmd_new_token(args):
                 "url": "http://127.0.0.1:%d/%s/" % (port, cfg["token"]) if port else None})
 
 
+def cmd_lan(args):
+    root = real_root(args.root)
+    cfg = load_config(root)
+    cfg["lan"] = args.mode == "on"
+    save_config(root, cfg)
+    out = {"ok": True, "lan": cfg["lan"]}
+    if whoami_lan(cfg.get("port"), cfg["token"]) not in (None, cfg["lan"]):
+        out["note"] = "run `serve.py stop` and then `serve.py ensure` to serve in the new mode"
+    return say(out)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd")
@@ -758,6 +1081,10 @@ def main(argv=None):
     p = sub.add_parser("unlock")
     p.add_argument("goal")
     p.set_defaults(fn=cmd_unlock)
+    p = sub.add_parser("lan")
+    p.add_argument("mode", choices=("on", "off"))
+    p.add_argument("--root", required=True)
+    p.set_defaults(fn=cmd_lan)
     p = sub.add_parser("new-token")
     p.add_argument("--root", required=True)
     p.set_defaults(fn=cmd_new_token)

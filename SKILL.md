@@ -34,9 +34,10 @@ You: grade finished lessons first, then the review answers, write feedback under
 ~/Learning/<goal-slug>/.run.lock
 ~/Learning/<goal-slug>/sandbox/         code topics only: NN-<slug>/ with a stub to fill in and check.py (prints one line per case, ends PASS or FAIL, exit 0 or 1)
 <notes folder>/.../<Goal>.md           the record: goal, source, lessons, misconceptions, page path
+~/Library/LaunchAgents/learn.serve.*.plist   the login job, on macOS, only when the learner uses the phone (Hosting)
 ```
 
-Nothing else. `~/Learning` is the learning root: the default, or the folder the learner picked (Profile and first run). `serve.py` is `scripts/serve.py` in this skill's folder; run it with the profile's `python` command. Each command prints one JSON line. On every tier, `answers.json` exists once a pasted block has been merged, and `state.json` once a block from Finish lesson (which carries `state`) has been merged too: on a page opened from disk they are your record, and the page never reads them.
+Nothing else. `~/Learning` is the learning root: the default, or the folder the learner picked (Profile and first run). `serve.py` and `schedule.py` are in this skill's `scripts/` folder; run them with the profile's `python` command. Each command prints one JSON line. On every tier, `answers.json` exists once a pasted block has been merged, and `state.json` once a block from Finish lesson (which carries `state`) has been merged too: on a page opened from disk they are your record, and the page never reads them.
 
 ## Profile and first run
 
@@ -54,7 +55,7 @@ Every run starts by reading the profile. It is `profile.json` in the learning ro
   "tz": "America/Denver",        the machine's time zone (IANA name)
   "reminders": "none",           none for now: reminders come in a later version
   "reminder_time": null,
-  "phone": "none",               none, or hosted when a goal is on a Claude hosted page
+  "phone": "none",               none; wifi (a phone on the same home Wi-Fi); hosted (a goal on a Claude hosted page)
   "prepare_ahead": null          null for now: the prepare-ahead run comes in a later version
 }
 ```
@@ -170,7 +171,13 @@ Each goal has one tier. The page's `#app[data-served]` marks a served goal; a UR
 
 - **Served,** the default when the profile's `python` is set. At the start of every interactive run on a served goal, or before opening a new one, run `<python> <this skill's folder>/scripts/serve.py ensure --root <learning root>`. It starts the goal server if none is running (the server keeps running after you exit) and prints a `url`; the goal's link is that `url` plus `<goal-slug>/` (`http://127.0.0.1:<port>/<token>/<goal-slug>/`). Open that link (`open`, `xdg-open`, or the browser), never a `localhost` or file:// one: each is its own browser storage. The link holds the server's token, so give it in the terminal and never in the vault note or a committed file; `page:` stays the file path. The page reads and writes `answers.json` and `state.json` through the server, and reloads itself when you save a new `index.html`. If `ensure` prints `ok: false`, give its error in one line and open the file instead: the page says that copy is not connected and keeps answers in the browser, with Copy answers.
 - **Local,** when `python` is null. The page opens from disk (if you cannot open it, give the path). Answers live in that browser's localStorage and reach you through the block that Finish lesson copies. Saving the file is the whole publish step; tell the learner to reload.
-- **Hosted.** If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone with the laptop off. Read `references/hosted.md` before the first publish, and put the URL in `page:`. Offer it only when the learner asks to use the phone away from the laptop.
+- **Same Wi-Fi,** a served goal on a phone, when the learner asks to use the phone at home and `python` is set. It needs the laptop awake and on the same Wi-Fi. Home Wi-Fi only: the phone link is plain HTTP, which others on a shared network (campus, work, a café) can read, and those networks often keep devices from reaching each other. Setup, once for the learning root:
+  1. `serve.py lan on --root <learning root>`: the server also listens on the Wi-Fi.
+  2. `<python> <this skill's folder>/scripts/schedule.py install --server --root <learning root>`: starts the server at login and again if it crashes, so a restart doesn't break the phone's bookmark. It stops a running server first and starts the job's own. macOS may show a "background item added" notice for Python; that is this job. Where it prints `ok: false` (only macOS is built so far), run `serve.py stop --root <learning root>`, then `ensure`, and say the phone link works until the laptop restarts, when the next run starts it again.
+  3. Set the profile's `phone` to `wifi`, then run `ensure` and open the goal's link on the laptop. The page's sidebar shows a QR code and the phone link. Tell the learner, in one line, to scan it with the phone on the same Wi-Fi and bookmark the page; `ensure` also prints the phone link (`phone`, and `phone_other` in case the name does not open), for the terminal only, since it holds the token. If the macOS firewall asks whether Python may accept incoming connections, the answer is Allow.
+
+  The phone saves to the same `answers.json` and `state.json`, so grading is unchanged. To turn it off: `serve.py lan off`, `schedule.py remove --server`, then `serve.py stop` and `ensure`, and set `phone` back to `none`.
+- **Hosted.** If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone with the laptop off. Read `references/hosted.md` before the first publish, and put the URL in `page:`. Offer it only when the learner asks to use the phone with the laptop off or away from home.
 
 A tier is picked when the goal starts and kept, with one change: a local goal whose learner now has `python` becomes served the next time you write to its page (add `data-served`, run `ensure`, open the served link). A run that writes nothing leaves it local. The old copy keeps its answers in that browser: when opened from disk it now says it is not connected and offers Copy answers, so the terminal line says to paste from there anything typed since the learner last pressed Finish lesson or Copy answers.
 

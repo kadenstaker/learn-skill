@@ -1,17 +1,21 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Topic title</title>
+<title>Goal title</title>
 <!--
-  learn skill: topic page template. One file per topic, inline style and script only.
+  learn skill: goal page template. One file per goal, inline style and script only.
   Copy it, replace every [bracketed] placeholder, delete the sample sections you are not writing yet.
 
   What the tutor edits:
-    <title>, .topic (twice), .meta          topic name and source line
-    nav.side a.item[href="#lNN"]            the full lesson plan, one link per lesson, written once at topic start
+    #app[data-goal]                         the goal id: the goal's slug plus 6 random hex digits, written once
+                                            at goal setup and kept whenever the page is rebuilt. It names this page's
+                                            browser storage (learn:<goal id>); without one, no item runs or saves.
+    <title>, .goal (twice), .meta           goal name and source line
+    nav.side .group + a.item[href="#lNN"]   the plan: one .group per topic, then one link per lesson of that topic.
+                                            Lesson numbers run across the whole goal, never restart per topic.
     main > section.lesson                   one per written lesson: data-type="probe|concept|drill",
                                             data-status="active|passed", data-help="0..3", optional data-note="redo q2"
-    .q[data-q="<lesson>-q<n>"][data-kind]   a question; kind = text | mc | num
+    .q[data-q="<lesson>-q<n>"][data-kind]   a question; kind = text | mc | num. Ids are unique across the goal page.
       mc:  .q[data-answer=key] > .opts > button.opt[data-key][data-why]
       num: .q[data-answer="35|35.0|7/2"][data-why][data-hint] > .row > input + button.check, then .fb
       text: textarea + .save
@@ -29,7 +33,9 @@
       attempt histories are joined, value and correct follow the latest attempt. Numeric drafts are saved.
     the sync line and the Copy answers button (every lesson on the local tier; on the served and hosted
       tiers, the current lesson while answers wait to send),
-    a "This item is broken" note on any .q it cannot run (unknown data-kind, a missing part, a bad or repeated data-q).
+    a "This item is broken" note on any .q it cannot run (unknown data-kind, a missing part, a bad or repeated data-q,
+      or no goal id on the page),
+    on a served goal opened from a file (#app[data-served] on a file:// page), a sync line saying this copy is not connected.
 -->
 <style>
   :root {
@@ -104,7 +110,7 @@
 
   /* sidebar */
   .eyebrow { font: 600 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-  .topic { font-size: 1.25rem; font-weight: 700; line-height: 1.2; text-wrap: balance; }
+  .goal { font-size: 1.25rem; font-weight: 700; line-height: 1.2; text-wrap: balance; }
   .meta { color: var(--muted); font-size: .9rem; }
   .progress { display: flex; align-items: center; gap: 10px; margin: 10px 0 6px; font: 12px var(--mono); color: var(--muted); }
   .bar { flex: 1; height: 5px; background: var(--rule); border-radius: 3px; overflow: hidden; }
@@ -203,7 +209,7 @@
       display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 5;
       background: var(--panel); border-bottom: 1px solid var(--rule); padding: 10px 16px;
     }
-    .top .topic { font-size: 1.05rem; }
+    .top .goal { font-size: 1.05rem; }
     button.menu { padding: 8px 12px; font-size: 14px; }
     .side {
       position: fixed; top: 0; left: 0; bottom: 0; z-index: 20; width: min(84vw, 320px);
@@ -219,24 +225,26 @@
 </style>
 
 <noscript><p class="noscript">This page needs a browser with scripts on. On a phone, use the link from your laptop.</p></noscript>
-<div class="app" id="app" data-topic="topic-slug">
+<div class="app" id="app" data-goal="[goal id]">
   <header class="top">
     <button class="menu" id="menu" type="button" aria-controls="side" aria-expanded="false">Lessons</button>
-    <span class="topic">Topic title</span>
+    <span class="goal">Goal title</span>
   </header>
   <div class="backdrop" id="backdrop" hidden></div>
 
   <nav class="side" id="side" aria-label="Lessons">
     <span class="eyebrow">Learn</span>
-    <span class="topic">Topic title</span>
+    <span class="goal">Goal title</span>
     <span class="meta">[course or field] · [source, section]</span>
     <div class="progress" id="progress"><span class="bar"><i></i></span><span></span></div>
 
-    <div class="group">Lessons</div>
-    <!-- The whole plan, in order. A link whose section does not exist yet is shown as planned. -->
+    <!-- The whole plan, in order: one .group per topic, then that topic's lessons. Numbers run across the goal.
+         A goal with one topic has one group. A link whose section does not exist yet is shown as planned. -->
+    <div class="group">[topic name]</div>
     <a class="item" href="#l00"><i class="dot"></i>0 · Where you're at</a>
     <a class="item" href="#l01"><i class="dot"></i>1 · [concept title]</a>
     <a class="item" href="#l02"><i class="dot"></i>2 · [drill title]</a>
+    <div class="group">[second topic name]</div>
     <a class="item" href="#l03"><i class="dot"></i>3 · [concept title]</a>
 
     <div class="group">Reference</div>
@@ -371,7 +379,7 @@
       <header class="strip"><span>reference</span></header>
       <h1>How this works</h1>
       <ul>
-        <li><b>One page per topic.</b> Lessons are listed in the sidebar in order. A filled dot is passed, a ringed dot is the one to do now, grey is not written yet.</li>
+        <li><b>One page per goal.</b> Lessons are listed in the sidebar in order, grouped by topic. A filled dot is passed, a ringed dot is the one to do now, grey is not written yet.</li>
         <li><b>Picture first.</b> Read the picture before the words. The caption points at the one thing to look at.</li>
         <li><b>Two kinds of lesson.</b> A concept lesson ends with questions you answer in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
         <li><b>Your answers save as you type.</b> When the page is served from your computer, or hosted by a tool that can store them, they are saved there and reach your other devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which. If some answers are not sent yet, it says how many, and Copy answers appears on the lesson.</li>
@@ -390,7 +398,10 @@
 <script>
 (function () {
   var app = document.getElementById('app');
-  var topic = app.getAttribute('data-topic') || 'topic';
+  /* the goal id names this page's storage. No fallback: two pages sharing one would mix their answers, so a page
+     without a usable id (missing, or still the template's placeholder) runs no item and stores nothing */
+  var goal = app.getAttribute('data-goal');
+  var goalOk = usable(goal);
   var sections = Array.prototype.slice.call(document.querySelectorAll('main > section'));
   var side = document.getElementById('side');
   var menu = document.getElementById('menu');
@@ -569,7 +580,7 @@
      and when the page becomes visible; a served page, which gets no live updates, reads the store again then. */
   var store = (function () {
     var NAMES = ['answers', 'state'];
-    var base = 'learn:' + topic;
+    var base = 'learn:' + goal;
     var KEY = { answers: base, state: base + ':state' };
     var OUT = { answers: base + ':outbox', state: base + ':state:outbox' };
     var WAIT = 15000;   /* a store call with no answer by then counts as failed; the record stays queued */
@@ -636,7 +647,9 @@
     var host = !!(window.claude && typeof window.claude.use === 'function');
     var served = !host && app.hasAttribute('data-served') && /^https?:$/.test(location.protocol);
     var adapter = served ? servedStore() : null;
-    var tier = served ? 'served' : host ? 'connecting' : 'local';   /* connecting: not yet known whether a database exists */
+    var tier = !goalOk ? 'none' : served ? 'served' : host ? 'connecting' : 'local';   /* connecting: not yet known whether a database exists */
+    /* a served goal opened as a file: it holds no token, so it cannot reach the goal's server or name its address */
+    var detached = !host && app.hasAttribute('data-served') && location.protocol === 'file:';
     var readOk = false, readFailed = false, stale = false, reading = false, sending = false;
     var live = {}, liveOver = {}, retryTimer = null, retryUsed = false;
     /* collection/id of each write not settled yet, even after its wait ran out: one write at a time per record.
@@ -647,11 +660,12 @@
     function map() { return Object.create(null); }   /* record ids as keys, never inherited names */
     function load(k) {
       var m = map(), o = null, id;
+      if (!goalOk) return m;
       try { o = JSON.parse(localStorage.getItem(k) || '{}'); } catch (e) {}
       if (o && typeof o === 'object' && !Array.isArray(o)) for (id in o) m[id] = o[id];
       return m;
     }
-    function keep(k, obj) { try { localStorage.setItem(k, JSON.stringify(obj)); } catch (e) {} }
+    function keep(k, obj) { if (!goalOk) return; try { localStorage.setItem(k, JSON.stringify(obj)); } catch (e) {} }
     var cache = {}, outbox = {};
     NAMES.forEach(function (n) {
       var saved = load(KEY[n]), id, r;
@@ -814,6 +828,7 @@
 
     function put(n, id, r) {
       if (!usable(id)) throw new Error('unusable record id "' + id + '"');
+      if (!goalOk) throw new Error('no goal id on the page');
       cache[n][id] = r;
       save(n);
       if (tier !== 'local') { outbox[n][id] = r.at || null; keep(OUT[n], outbox[n]); retryUsed = false; kick(); }
@@ -822,6 +837,7 @@
 
     function start(status, remote) {
       onStatus = status; onRemote = remote;
+      if (!goalOk) { tell(); return; }
       window.addEventListener('storage', function (e) {
         NAMES.forEach(function (n) {
           if (e.key !== KEY[n]) return;
@@ -854,7 +870,7 @@
       putState: function (key, r) { put('state', key, r); },
       waiting: function (id) { return tier !== 'local' && id in outbox.answers; },
       status: function () {
-        return { tier: tier, readOk: readOk, readFailed: readFailed, sending: sending,
+        return { tier: tier, detached: detached, readOk: readOk, readFailed: readFailed, sending: sending,
                  pending: Object.keys(outbox.answers).length, pendingState: Object.keys(outbox.state).length };
       },
       start: start
@@ -1032,6 +1048,7 @@
   questions.forEach(function (q) {
     try {
       var id = q.getAttribute('data-q'), kind = q.getAttribute('data-kind');
+      if (!goalOk) throw new Error('no goal id on the page');
       q._section = q.closest('section');
       if (!q._section) throw new Error('not inside a section');
       /* the id is the store key and a database path segment */
@@ -1060,7 +1077,7 @@
 
   /* ---------- export: hands a lesson's answers to the tutor as JSON ---------- */
   function exportJSON(section) {
-    var out = { topic: topic, lesson: section.id, exported: new Date().toISOString(), answers: [] };
+    var out = { goal: goal, lesson: section.id, exported: new Date().toISOString(), answers: [] };
     Array.prototype.forEach.call(section.querySelectorAll('.q'), function (q) {
       if (q._broken) return;   /* it says so on the page; a repeated id would export another item's answer */
       var id = q.getAttribute('data-q');
@@ -1099,6 +1116,8 @@
   /* ---------- sync line, save lines and Copy answers follow the store ---------- */
   var syncLine = document.getElementById('sync');
   function syncText(s) {
+    if (s.tier === 'none') return 'answers: not saved. This page has no goal id, so tell the tutor';
+    if (s.detached) return 'This copy is not connected. Answers here stay in this browser. Use Copy answers, or open this goal from your bookmark or the tutor\'s link.';
     if (s.tier === 'local') return 'answers: this device only, copy them at the end of each lesson';
     if (s.tier === 'connecting') return 'answers: checking sync';
     if (s.pending) return s.pending + (s.pending === 1 ? ' answer' : ' answers') + ' not sent yet, saved on this device';

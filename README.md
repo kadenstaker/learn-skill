@@ -35,6 +35,8 @@ Do the lesson on the page, then say one word in the terminal:
 | `just tell me` | the answer, no argument |
 | `next` | move on |
 
+Each rule you pass comes back later as a short review question with new numbers, every week by default or spread out before an exam date you give. When one is due, the page opens there first, never more than three a day.
+
 Come back any time with the topic name; it picks up at the active lesson.
 
 ## Two tiers

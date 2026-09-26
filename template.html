@@ -25,7 +25,10 @@
         data-answer is the one shown) and a .reveal[hidden] after .fb that opens after the attempt, right or wrong.
         A concept lesson opens with one; its picture goes in the .reveal.
     .feedback[hidden]                       under every question; the tutor fills it after grading and removes hidden
-    section#cheat                           passed rules only
+    section#review > .q                     review items, written when a lesson passes: an mc or num with data-once,
+                                            data-rule="rNN" (the cheat-sheet rule it tests) and data-due="YYYY-MM-DD",
+                                            ids rNN-v<n> that never repeat. Answered ones are replaced with fresh ids.
+    section#cheat                           passed rules only, each an li[data-rule="rNN"][data-level="0..3"]
 
   What the script derives, so the tutor never edits it:
     the strip at the top of each lesson (number, type, help level, note), sidebar dots and status,
@@ -44,6 +47,9 @@
     the resume point and the session log (state records, written on each answer and on Finish); the page opens
       at the resume point's lesson while it is still active, else at the first active lesson,
     the return banner on that lesson after two or more days away ("Back after 8 days. 6 of 11 done here, next is q7."),
+    today's review: the items due today or earlier and not answered, at most one per rule and 3 a day, oldest due
+      first; items answered today stay shown, earlier ones are hidden. While one is left to do, the page opens at
+      the review, and the return banner goes there. Review answers ride along in every Copy answers and Finish block,
     on the served tier, a check of api/version every 30 s and when the page becomes visible: a new index.html
       reloads the page, or shows "New lesson ready" with a Reload button while an answer box has focus,
     a "This item is broken" note on any .q it cannot run (unknown data-kind, a missing part, a bad or repeated data-q,
@@ -215,6 +221,9 @@
   .finish .note { font: 12px var(--mono); color: var(--muted); }
   .finish textarea { width: 100%; min-height: 72px; font: 12px var(--mono); }
   .strip .waiting { color: var(--accent); }
+  .q[hidden] { display: none; }
+  .review-state { color: var(--muted); }
+  .review-state a { color: var(--accent); }
   .banner { margin: 0 0 18px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: .97rem; }
   .banner[hidden] { display: none; }
   .fresh { position: sticky; bottom: 0; z-index: 4; display: flex; gap: 12px; align-items: center; justify-content: space-between;
@@ -261,6 +270,7 @@
     <span class="goal">Goal title</span>
     <span class="meta">[course or field] · [source, section]</span>
     <div class="progress" id="progress"><span class="bar"><i></i></span><span></span></div>
+    <a class="item" id="review-link" href="#review"><i class="dot"></i>Review</a>
 
     <!-- The whole plan, in order: one .group per topic, then that topic's lessons. Numbers run across the goal.
          A goal with one topic has one group. A link whose section does not exist yet is shown as planned. -->
@@ -397,6 +407,21 @@
       <nav class="pager"></nav>
     </section>
 
+    <!-- ============ Review: filled when a lesson passes. Keep the section, even while it holds no items. ============
+         One item per version, 3 or 4 versions per rule, placed before the .done line:
+         <div class="q" data-q="r01-v1" data-rule="r01" data-due="2026-10-02" data-kind="num" data-answer="220" data-why="..." data-once>
+           <span class="kind">review · rule name</span><p class="prompt">...</p>
+           <div class="row"><input class="num" id="r01-v1" type="text" autocomplete="off"><button class="check" type="button">Check</button></div>
+           <div class="fb"></div>
+         </div>                                                                                                    -->
+    <section id="review">
+      <header class="strip"><span>review</span><span>one try each, the answer shows after</span></header>
+      <h1>Review</h1>
+      <p class="review-state"></p>
+      <p class="done">The tutor reads these on its next run and writes fresh versions.</p>
+      <nav class="pager"></nav>
+    </section>
+
     <!-- ============ Reference ============ -->
     <section id="cheat">
       <header class="strip"><span>reference</span><span>only what you have passed</span></header>
@@ -419,6 +444,7 @@
         <li><b>Help level.</b> Each lesson shows one: 3 worked example, 2 outline, 1 bare, 0 you define the check. Two clean lessons in a row moves it down. Getting stuck moves it up.</li>
         <li><b>When you are wrong,</b> the tutor first works out why. A wrong mental model gets a picture of where your answer parts from reality and one question. A slip gets a finger pointed at the step. An edge case gets the failing input. You get the answer whenever you ask for it.</li>
         <li><b>The cheat sheet</b> grows as you pass lessons. It holds only rules you have already used correctly.</li>
+        <li><b>Review.</b> After you pass a lesson, its rule comes back every few days as a short question with new numbers. One try, then the answer shows. When one is due, the page opens there first; it is never more than three a day. A rule counts as learned once you get it right on three separate days.</li>
       </ul>
       <nav class="pager"></nav>
     </section>
@@ -473,13 +499,15 @@
 
   /* ---------- router: one section at a time ---------- */
   function titleOf(s) { var h = s.querySelector('h1'); return h ? h.textContent : s.id; }
-  function defaultId() {
+  function lessonId() {
     /* the resume point's lesson while it is still active, so a lesson the tutor has since passed never holds the page */
     var r = store && store.state('resume'), at = r && typeof r.lesson === 'string' && document.getElementById(r.lesson);
     if (at && at.classList.contains('lesson') && at.getAttribute('data-status') === 'active') return at.id;
     var active = document.querySelector('.lesson[data-status="active"]');
     return active ? active.id : sections[0].id;
   }
+  /* today's review comes first while an item of it is left to do */
+  function defaultId() { return reviewSection && todays().todo.length ? reviewSection.id : lessonId(); }
   function currentId() {
     var h = location.hash.replace('#', '');
     for (var i = 0; i < sections.length; i++) if (sections[i].id === h) return h;
@@ -938,6 +966,7 @@
     }
     r.at = at;
     store.put(r);
+    if (attempt && q._section === reviewSection) showReview();
     if (attempt || (typeof fields.value === 'string' && fields.value.trim())) {
       try { noteAnswer(q); } catch (e) { if (window.console) console.error('learn: progress not recorded', e); }
     }
@@ -966,7 +995,13 @@
     return DEVICE;
   }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
-  function today() { var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function dateOf(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function today() { return dateOf(new Date()); }
+  /* a YYYY-MM-DD date as a day count, NaN for anything else (2026-02-30 included) */
+  function dayNumber(d) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''), t = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    return t && t.getUTCMonth() === +m[2] - 1 && t.getUTCDate() === +m[3] ? t.getTime() / 864e5 : NaN;
+  }
   /* merges fields into a state record; writes only when something changed, unless forced */
   function setState(key, fields, force) {
     var old = store.state(key), r = {}, k;
@@ -994,7 +1029,7 @@
   function noteAnswer(q) {
     answeredHere = true;
     noteSession('answered', q.getAttribute('data-q'));
-    setState('resume', { lesson: q._section.id, q: q.getAttribute('data-q'), device: device() });
+    if (q._section !== reviewSection) setState('resume', { lesson: q._section.id, q: q.getAttribute('data-q'), device: device() });
   }
 
   /* ---------- question kinds ---------- */
@@ -1162,6 +1197,8 @@
     try { q._hydrate(store.get(q.getAttribute('data-q'))); } catch (e) { broken(q, e); }
   }
 
+  var reviewSection = document.getElementById('review');
+  if (reviewSection && reviewSection.tagName !== 'SECTION') reviewSection = null;
   var questions = Array.prototype.slice.call(document.querySelectorAll('.q'));
   var byId = {};
   questions.forEach(function (q) {
@@ -1174,6 +1211,11 @@
       if (!usable(id)) throw new Error('missing or unusable data-q');
       if (byId[id]) throw new Error('data-q repeats another item');
       if (!KINDS.hasOwnProperty(kind)) throw new Error('unknown data-kind "' + kind + '"');
+      if (q._section === reviewSection) {
+        if (kind === 'text' || !q.hasAttribute('data-once')) throw new Error('a review item is an mc or num with data-once');
+        if (!usable(q.getAttribute('data-rule'))) throw new Error('missing or unusable data-rule');
+        if (isNaN(dayNumber(q.getAttribute('data-due')))) throw new Error('data-due is not a YYYY-MM-DD date');
+      }
       KINDS[kind](q);
       byId[id] = q;
     } catch (e) { broken(q, e); }
@@ -1203,6 +1245,11 @@
       out.answers.push(store.get(id) ||
         { lesson: section.id, q: id, kind: q.getAttribute('data-kind'), value: null, correct: null, attempts: 0, at: null, history: [] });
     });
+    /* review answers ride along with every lesson's block, so a page opened from disk hands them over too */
+    if (reviewSection && section !== reviewSection) Array.prototype.forEach.call(reviewSection.querySelectorAll('.q'), function (q) {
+      var d = !q._broken && store.get(q.getAttribute('data-q'));
+      if (d) out.answers.push(d);
+    });
     return JSON.stringify(out);
   }
   function addExport(section) {
@@ -1230,7 +1277,7 @@
     return box;
   }
   var exportBoxes = [];
-  sections.forEach(function (s) { if (s.classList.contains('lesson')) { var box = addExport(s); if (box) exportBoxes.push(box); } });
+  sections.forEach(function (s) { if (s.classList.contains('lesson') || s === reviewSection) { var box = addExport(s); if (box) exportBoxes.push(box); } });
 
   /* ---------- Finish lesson: a marker the tutor grades first on its next run ---------- */
   function finishJSON(section) {
@@ -1292,11 +1339,76 @@
     });
   }
 
-  /* ---------- return banner: after two or more days away, how far this lesson got ---------- */
-  function dayNumber(d) {
-    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
-    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5 : NaN;
+  /* ---------- today's review: due items first, at most one per rule and REVIEW_MAX a day ----------
+     An item is answered once (data-once). One answered today stays shown with its answer; one answered on an
+     earlier day is hidden until the tutor replaces it with a fresh version. The tutor owns data-due. */
+  var REVIEW_MAX = 3, DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var reviewLink = document.getElementById('review-link'), reviewState = reviewSection && reviewSection.querySelector('.review-state');
+  function reviewItems() {
+    return reviewSection ? Array.prototype.slice.call(reviewSection.querySelectorAll('.q')).filter(function (q) { return !q._broken; }) : [];
   }
+  /* the local day of an answer's first attempt, or '' when it has none that dates it */
+  function answeredDay(d) {
+    var t = time(d.history && d.history[0] ? d.history[0].at : d.at);
+    return t > -Infinity ? dateOf(new Date(t)) : '';
+  }
+  function todays() {
+    var now = today(), n = dayNumber(now), items = reviewItems(), out = { done: [], todo: [], more: false, next: null, count: items.length };
+    var ruleDone = {}, due = [];
+    items.forEach(function (q, i) {
+      var d = store.get(q.getAttribute('data-q'));
+      if (d && d.value != null && String(d.value).trim() !== '') {
+        if (answeredDay(d) === now) { out.done.push(q); ruleDone[q.getAttribute('data-rule')] = true; }
+        return;
+      }
+      var day = q.getAttribute('data-due');
+      if (dayNumber(day) <= n) due.push({ q: q, day: day, i: i });
+      else if (!out.next || day < out.next) out.next = day;
+    });
+    due.sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : a.i - b.i; });
+    due.forEach(function (x) {
+      var rule = x.q.getAttribute('data-rule');
+      if (ruleDone[rule] || out.done.length + out.todo.length >= REVIEW_MAX) { out.more = true; return; }
+      ruleDone[rule] = true;
+      out.todo.push(x.q);
+    });
+    return out;
+  }
+  function when(day) {
+    var n = dayNumber(day) - dayNumber(today()), m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+    if (n === 1) return 'tomorrow';
+    return DAYS[new Date(+m[1], +m[2] - 1, +m[3]).getDay()] + ' ' + +m[3] + ' ' + MONTHS[+m[2] - 1];
+  }
+  function showReview() {
+    if (!reviewSection) return;
+    var t = todays(), shown = t.done.concat(t.todo);
+    Array.prototype.forEach.call(reviewSection.querySelectorAll('.q'), function (q) { q.hidden = !q._broken && shown.indexOf(q) < 0; });
+    if (reviewLink) {
+      reviewLink.textContent = '';
+      reviewLink.appendChild(document.createElement('i')).className = 'dot';
+      reviewLink.appendChild(document.createTextNode('Review' + (t.todo.length ? ' · ' + t.todo.length + ' due' : '')));
+      if (t.todo.length) reviewLink.setAttribute('data-status', 'active'); else reviewLink.removeAttribute('data-status');
+    }
+    if (!reviewState) return;
+    var text = !t.count ? 'Nothing to review yet. A rule comes here after you pass its lesson.'
+      : t.todo.length ? t.todo.length + (t.todo.length === 1 ? ' item' : ' items') + ' to do today.'
+      : (t.done.length ? 'Done for today.' : 'Nothing due today.') +
+        (t.more ? ' More tomorrow.' : t.next ? ' Next review ' + when(t.next) + '.' : '');
+    var lesson = !t.todo.length && document.getElementById(lessonId());
+    if (reviewState._text === text + (lesson ? lesson.id : '')) return;
+    reviewState._text = text + (lesson ? lesson.id : '');
+    reviewState.textContent = text;
+    if (lesson && lesson.classList.contains('lesson')) {
+      var a = document.createElement('a');
+      a.href = '#' + lesson.id; a.textContent = titleOf(lesson);
+      reviewState.appendChild(document.createTextNode(' Continue with '));
+      reviewState.appendChild(a);
+      reviewState.appendChild(document.createTextNode('.'));
+    }
+  }
+
+  /* ---------- return banner: after two or more days away, how far this lesson got ---------- */
   function lastDay() {
     var last = null;
     store.stateKeys().forEach(function (k) {
@@ -1312,15 +1424,17 @@
   var banner = null;
   function showBanner() {
     if (answeredHere) return;   /* it describes the visit's start; answering here makes it old news */
-    var sec = document.getElementById(defaultId()), last = lastDay();
+    var sec = document.getElementById(lessonId()), last = lastDay(), todo = reviewSection ? todays().todo.length : 0;
     var gap = last ? dayNumber(today()) - dayNumber(last) : 0;
     if (!sec || !sec.classList.contains('lesson') || !(gap >= 2)) { if (banner) banner.hidden = true; return; }
     var qs = Array.prototype.slice.call(sec.querySelectorAll('.q')).filter(function (q) { return !q._broken; });
     var done = qs.filter(answered).length, next = qs.filter(function (q) { return !answered(q); })[0];
-    var text = 'Back after ' + gap + ' days. ' + (next
-      ? done + ' of ' + qs.length + ' done here, next is ' + next.getAttribute('data-q').replace(/^.*-/, '') + '.'
-      : 'All ' + qs.length + ' done here.' + (waiting(sec) ? ' Finished, waiting for the tutor.' : ' Press Finish lesson when you are ready.'));
+    var here = todo ? ' in ' + titleOf(sec) : ' here';
+    var text = 'Back after ' + gap + ' days. ' + (todo ? 'Review first: ' + todo + (todo === 1 ? ' item' : ' items') + '. Then ' : '') + (next
+      ? done + ' of ' + qs.length + ' done' + here + ', next is ' + next.getAttribute('data-q').replace(/^.*-/, '') + '.'
+      : 'All ' + qs.length + ' done' + here + '.' + (waiting(sec) ? ' Finished, waiting for the tutor.' : ' Press Finish lesson when you are ready.'));
     if (!banner) { banner = document.createElement('p'); banner.className = 'banner'; banner.setAttribute('role', 'status'); }
+    if (todo) sec = reviewSection;
     var strip = sec.querySelector('.strip');
     if (banner.parentNode !== sec) sec.insertBefore(banner, strip ? strip.nextSibling : sec.firstChild);
     banner.hidden = false;
@@ -1387,6 +1501,7 @@
   function rehydrate(name, ids) {
     if (name === 'state') { showFinish(); showBanner(); return; }
     if (name !== 'answers') return;
+    showReview();
     var touched = [];
     ids.forEach(function (id) {
       var q = byId[id];
@@ -1399,8 +1514,9 @@
 
   /* ---------- hydrate from this device at once, then from the store when it answers ---------- */
   window.addEventListener('hashchange', render);
-  render();   /* after the store, so the page can open at the resume point */
   questions.forEach(hydrate);
+  showReview();
+  render();   /* after the store and the review, so the page can open at the review or the resume point */
   sections.forEach(updateScore);
   showBanner();
   store.start(showSync, rehydrate);

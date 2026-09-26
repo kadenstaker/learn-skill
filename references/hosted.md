@@ -8,7 +8,7 @@ Use this when the host can publish an HTML file to a URL and give the page a sma
 - First publish: `Artifact` with `file_path`, `capabilities: {db: {}}`, an `icon`, and a one-line `description`. Put the URL in the vault note's `page:` line.
 - Later sessions: `Artifact` action `read` with the URL first, then publish with `url` so the same link updates. Open views refresh on their own.
 - Finished lessons: `ArtifactData` action `list` (or `query`), collection `state`. Each `finish:<lesson>` document newer than that section's `data-graded` is graded first (SKILL.md, Finished lessons first). After grading, set `data-graded` in the page and republish; leave the marker.
-- Grading: `ArtifactData` action `query`, collection `answers`, `query.where` on `lesson == <section id>`. Each document has the same fields as a pasted answer: `lesson`, `q`, `kind`, `value`, `correct`, `attempts`, `history`, `at`.
+- Grading: `ArtifactData` action `query`, collection `answers`, `query.where` on `lesson == <section id>`. Each document has the same fields as a pasted answer: `lesson`, `q`, `kind`, `value`, `correct`, `attempts`, `history`, `at`. Review answers are the documents with `lesson == "review"` (SKILL.md, Review); after replacing answered versions, republish.
 - The page opens at the resume point's lesson while it is active, else at the active lesson. Hash links in the URL do not reach it, so never promise a deep link.
 - The phone uses the same URL, signed in.
 

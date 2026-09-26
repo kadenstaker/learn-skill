@@ -3,7 +3,7 @@ name: learn
 description: Tutor for one concept at a time. Builds a phone-friendly lesson page (short lessons: a guess, then a picture, few words, questions with answer boxes), grades what the learner typed, brings passed rules back as spaced review, and keeps a terse record in their Obsidian vault. One page per goal, its topics grouped in the sidebar.
 disable-model-invocation: true
 argument-hint: "<topic> [source: path or url]"
-compatibility: "Needs a shell. Optional: Python 3.7+ (local server), curl (ntfy reminders), launchd, systemd or Task Scheduler (prepare-ahead run; launchd or systemd also keep the server running for a phone)."
+compatibility: "Needs a shell. Optional: Python 3.7+ (local server, reminders), launchd, systemd or Task Scheduler (prepare-ahead run; launchd or systemd also keep the server running for a phone)."
 ---
 
 # Learn
@@ -53,8 +53,9 @@ Every run starts by reading the profile. It is `profile.json` in the learning ro
   "confidence": "default",       default | all (Confidence tag)
   "prefers": "",                 the learner's own words on how they like to learn, added to The learner's defaults
   "tz": "America/Denver",        the machine's time zone (IANA name)
-  "reminders": "none",           none for now: reminders come in a later version
-  "reminder_time": null,
+  "reminders": "none",           none | ntfy (a phone notification on days the learner skips) | ics (a daily calendar event) (Reminders)
+  "reminder_time": null,         "HH:MM", 24-hour, in tz
+  "ntfy": null,                  {"server", "topic"}, written by `serve.py nudge on`; the topic is a secret like the token
   "phone": "none",               none; wifi (a phone on the same home Wi-Fi); tailscale (a phone anywhere, laptop awake);
                                  hosted (a goal on a Claude hosted page, laptop can be off)
   "prepare_ahead": null          null for now: the prepare-ahead run comes in a later version
@@ -70,7 +71,7 @@ Every run starts by reading the profile. It is `profile.json` in the learning ro
 
 Then one line in the terminal after the usual one: where the profile is and the settings that shape lessons ("Settings in ~/Learning/profile.json: 5-minute lessons, a balanced mix, confidence tags on guesses and reviews. Say `settings` to change them."). A learner with goals but no profile (from before profiles) gets the same, with `notes` set to the folder that holds the goal's note, and no question.
 
-**`settings`.** Show the settings in a short list and change what the learner asks for. A change to `mix` or `session_minutes` shapes the next lesson written, never one already on the page. A change to `confidence` goes onto each goal page's `#app` the next time you write to it.
+**`settings`.** Show the settings in a short list and change what the learner asks for. A change to `mix` or `session_minutes` shapes the next lesson written, never one already on the page. A change to `confidence` goes onto each goal page's `#app` the next time you write to it. Reminders and their time change as in Reminders.
 
 **Updating it from behavior.** When what the learner does shows a different preference on 3 separate days, change that one setting, and say so in one sentence at the top of the next lesson you write, with the reason and how to undo it ("Lessons are now about 10 minutes: you opened I want more on three days. Say settings to change it."). Signals: text items left blank or answered in a few words while mc items are done → `more choice`; long text answers and too easy on auto-checked lessons → `more own words`; I want more, or two lessons finished in a sitting → `session_minutes: 10`; at 10 minutes, lessons left unfinished or marked too hard → back to 5. Something the learner says about how they like to learn goes into `prefers` in their words. A scheduled run never changes the profile: it leaves the change for the next interactive run.
 
@@ -100,6 +101,7 @@ On every run on an existing goal, before anything the learner asked for (startin
 2. **Find them.** Each `finish:<lesson>` record in `state.json` (on a hosted page, the database's `state` collection) whose `at` is newer than that section's `data-graded`, or whose section has none, is a finished lesson waiting for you. A pasted block with `done` is one too.
 3. **Grade each** as in Grading, oldest marker first. Then the review answers, as in Review.
 4. **Clear it.** After a successful grade, set the section's `data-graded` to the marker's `at`, copied exactly (the current time in the same form when there was no marker). That is the only way a wait ends: never write a state record for it, and leave the marker where it is. A grade that fails part way leaves `data-graded` alone, so the next run tries again.
+5. **Nudges.** When the profile's `reminders` is `ntfy`, run `<python> <this skill's folder>/scripts/serve.py nudge send --root <learning root>` after grading or merging a pasted block (Reminders). Say nothing about its output.
 
 **Writing the records.** Never edit `answers.json` or `state.json` by hand or rewrite them whole: a phone can write between your read and your write. Everything goes through `serve.py merge`, which merges record by record under a lock. A pasted block goes in first, before you grade: `serve.py merge <goal folder> block -` with the block on stdin. It refuses a block from another goal's page. If `python` is null, grade from the block and skip the merge.
 
@@ -187,6 +189,11 @@ Each goal has one tier. The page's `#app[data-served]` marks a served goal; a UR
 
   If the phone link stops opening: the laptop is asleep or offline, or Tailscale is off on the phone (iOS runs one VPN at a time, so another VPN app turns it off). If the server ever moves to a new port, `ensure` points Serve at it and the link stays the same. To turn it off: `serve.py tailscale off`, then `serve.py stop` and `ensure`; remove the login job unless Same Wi-Fi still uses it; set `phone` to `none`.
 - **Hosted.** If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone with the laptop off. Read `references/hosted.md` before the first publish, and put the URL in `page:`. Offer it only when the learner asks to use the phone with the laptop off, or away from home without Tailscale. Before offering it, say in one line that the page's shared database may need a paid Claude plan. Set the profile's `phone` to `hosted`.
+
+**Reminders.** Only when the learner asks for them, or asks in `settings`; first run doesn't offer them. They need `python`: when it is null, say reminders need Python 3.7+ and stop there. The time: the one the learner gives, else one from the anchor ("after morning coffee" gives 08:00), said back in one line so they can change it. Two kinds:
+
+- **ntfy,** a phone notification, only on days the learner skips: one the day after their last practice day, one more the day after that (the last day that keeps the streak), both at the reminder time. Nothing else is ever sent, and a sitting moves both. Run `<python> <this skill's folder>/scripts/serve.py nudge on --root <learning root> --time HH:MM`. It makes a random topic, saves it with the time in the profile, and sends a test message. Then tell the learner, in one line, to install the ntfy app on the phone and subscribe to the topic it printed (`topic`); the test message shows up once they have. The topic works like a password: terminal only, never the vault note. After that, every Finish lesson on a served page republishes the nudges by itself, and you run `nudge send` after grading (Finished lessons first, step 5). For a hosted goal, first merge the database's `session:` documents into the goal folder's `state.json` (`serve.py merge <goal folder> state -`), then add `--link <page URL>` so the notification opens the page; a served link holds the token, so it never goes on a notification. `nudge off` cancels the queued ones and turns them off. A new time: `nudge on --time` again, which keeps the topic.
+- **Calendar,** for a learner who would rather not install an app: `serve.py ics --root <learning root> --time HH:MM` (`--link <page URL>` for a hosted goal) writes `<learning root>/reminder.ics`, a daily event at that time with an alert. Open it (`open`, `xdg-open`) to import it and say so in one line. Imported events never update: a new time means a new file, and the learner deletes the old event.
 
 **The phone.** When the learner asks to use a phone, pick the path from where they will use it, and say what it needs in one line. Same Wi-Fi and Tailscale serve from the laptop, so they stop while it sleeps or is shut; Hosted is the path with the laptop off.
 

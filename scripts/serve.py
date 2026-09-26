@@ -13,6 +13,13 @@ usage:
   serve.py new-token --root DIR           replace the token (every bookmark then needs the new link)
   serve.py lan on|off --root DIR          also listen on the local network, for a phone on the same Wi-Fi, or stop
   serve.py tailscale on|off --root DIR    serve the goals to the learner's other devices through Tailscale Serve (HTTPS), or stop
+  serve.py nudge on --root DIR --time HH:MM [--server URL]
+                                          turn on ntfy reminders: a new random topic, a test message, then send
+  serve.py nudge send --root DIR [--ready] [--link URL]
+                                          republish the daily and streak nudges from the session logs
+  serve.py nudge off --root DIR           cancel the queued nudges and turn reminders off
+  serve.py ics --root DIR [--time HH:MM] [--link URL]
+                                          write <root>/reminder.ics, a daily calendar event at the reminder time
 
 GOAL is a goal folder; FILE is {"schema": 1, "records": {id: record}}, or "-" for stdin. A block is
 {"goal", "lesson", "answers": [record], "state": {key: record}}; "state" comes only from Finish lesson.
@@ -25,6 +32,7 @@ and LAN address as Host, and each goal gains api/phone (the phone links) and api
 With tailscale on, `tailscale serve` proxies https://<machine>.<tailnet>.ts.net/ to the server on 127.0.0.1, the
 server accepts that name as Host too, and api/phone and api/qr.svg lead with the https link.
 Every request needs the token and a Host on the allowlist; nothing else under the root is served.
+A Finish lesson write (a finish: state record) republishes the ntfy nudges in the background when reminders are on.
 A running server keeps its pid in <root>/serve.pid; one started by `ensure` logs to <root>/serve.log (0600),
 which never holds the token.
 
@@ -37,7 +45,7 @@ Python 3.7+ standard library only.
 """
 import argparse, errno, hmac, http.client, json, math, os, re, secrets, shutil, signal, socket, stat, subprocess, sys, tempfile, threading, time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SCHEMA = 1
@@ -184,11 +192,12 @@ class StoreError(Exception):
 
 
 _thread_lock = threading.Lock()   # flock excludes other processes; this excludes the server's own threads
+_nudge_lock = threading.Lock()    # its own, so a slow ntfy request never holds up a record write
 
 
 @contextmanager
-def file_lock(path):
-    with _thread_lock:
+def file_lock(path, tlock=_thread_lock):
+    with tlock:
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             if os.name == "nt":
@@ -613,6 +622,236 @@ def save_config(root, cfg):
     write_atomic(os.path.join(root, CONFIG), (json.dumps(cfg, indent=1, sort_keys=True) + "\n").encode("utf-8"))
 
 
+# ---------------------------------------------------------------- nudges (ntfy) and the .ics reminder
+# Two delayed ntfy messages with fixed sequence IDs, republished after every recorded sitting: "daily" for the day
+# after the last practice day, "streak" for the second day after it (the last day that keeps the streak; the page's
+# streak survives one day off). Their times come only from the session logs, so a republish at any hour leaves them
+# where they were, and a message whose time has passed is not sent. One topic serves the whole learning root, so the
+# last practice day is the latest one over every goal. A failed publish leaves the old ones queued.
+PROFILE = "profile.json"
+NUDGE_STATE = ".nudge.json"     # what each sequence ID was last published as; unchanged ones are not sent again
+NUDGE_LOCK = ".nudge.lock"
+NTFY_DEFAULT = "https://ntfy.sh"
+NUDGE_IDS = ("daily", "streak")
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+TIME_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
+
+
+def read_profile(root):
+    try:
+        with open(os.path.join(root, PROFILE), "r", encoding="utf-8") as f:
+            prof = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        raise SystemExit("%s: not readable as JSON (%s)" % (os.path.join(root, PROFILE), e))
+    return prof if isinstance(prof, dict) else {}
+
+
+def save_profile(root, prof):   # 0600: it holds the ntfy topic
+    write_atomic(os.path.join(root, PROFILE), (json.dumps(prof, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+def parse_date(d):
+    if not isinstance(d, str) or not DATE_RE.fullmatch(d):
+        return None
+    try:
+        return datetime.strptime(d, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def session_days(root):
+    """(practice days, days with any session) over every goal under root. A practice day, as on the page: that
+    day's review was cleared on some device, or 3 or more different questions were answered over all devices."""
+    answered, review = {}, set()
+    for name in sorted(os.listdir(root)):
+        goal = os.path.join(root, name)
+        if not SLUG_RE.fullmatch(name) or os.path.islink(goal) or not os.path.isfile(os.path.join(goal, "index.html")):
+            continue
+        try:
+            recs = read_records(goal, "state")
+        except StoreError as e:
+            sys.stderr.write("%s\n" % e)
+            continue
+        for key, r in recs.items():
+            day = isinstance(r, dict) and key.startswith("session:") and parse_date(r.get("date"))
+            if not day:
+                continue
+            ids = answered.setdefault((name, day), set())
+            ids.update(q for q in (r.get("answered") if isinstance(r.get("answered"), list) else []) if isinstance(q, str))
+            if r.get("reviewDone") is True:
+                review.add(day)
+    seen = {day for _, day in answered}
+    practice = set(review) | {day for (_, day), ids in answered.items() if len(ids) >= 3}
+    return practice, seen
+
+
+def local_time(day, hhmm, tz):
+    """Unix time of hhmm on day in time zone tz (the machine's own when tz is unknown)."""
+    h, m = int(hhmm[:2]), int(hhmm[3:])
+    try:
+        from zoneinfo import ZoneInfo   # 3.9+
+        return int(datetime(day.year, day.month, day.day, h, m, tzinfo=ZoneInfo(tz)).timestamp())
+    except ImportError:
+        pass
+    except Exception:
+        tz = None
+    old = os.environ.get("TZ")
+    try:
+        if tz and hasattr(time, "tzset"):
+            os.environ["TZ"] = tz
+            time.tzset()
+        return int(time.mktime((day.year, day.month, day.day, h, m, 0, 0, 0, -1)))
+    finally:
+        if tz and hasattr(time, "tzset"):
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
+
+def local_today(now, tz):
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.fromtimestamp(now, ZoneInfo(tz)).date()
+    except Exception:
+        return datetime.fromtimestamp(now).date()
+
+
+def safe_link(root, link):
+    """None when link may ride on a reminder: https, no goal server token, not a laptop or tailnet address.
+    That is a Claude hosted page's URL; a served link holds the token and a file:// path is no use on a phone."""
+    from urllib.parse import urlsplit
+    u = urlsplit(link)
+    host = (u.hostname or "").lower()
+    cfg = load_config(root, create=False) or {}
+    if u.scheme != "https" or not host:
+        return "only an https page link goes on a reminder"
+    if host in ("localhost", "127.0.0.1") or host.endswith((".local", ".ts.net")) or re.fullmatch(r"[\d.]+", host) or ":" in host:
+        return "a link to the laptop's own server holds the token; reminders go without a link"
+    if cfg.get("token") and cfg["token"] in link:
+        return "the link holds the goal server's token"
+    return None
+
+
+def nudge_plan(root, prof, now, ready=False, link=None):
+    """{sequence id: message} for the nudges still ahead of now."""
+    hhmm, tz = prof.get("reminder_time"), prof.get("tz")
+    if not isinstance(hhmm, str) or not TIME_RE.fullmatch(hhmm):
+        return {}
+    mins = prof.get("session_minutes") if prof.get("session_minutes") in (5, 10) else 5
+    today = local_today(now, tz)
+    practice, seen = session_days(root)
+    last = max((d for d in practice if d <= today), default=None)
+    base = last or max((d for d in seen if d <= today), default=None)   # no practice day yet: remind from the last visit
+    if not base:
+        return {}
+    one = timedelta(days=1)
+    plan = {"daily": (base + one, ("Next lesson is ready. " if ready else "") + "%d minutes today?" % mins)}
+    if last:
+        plan["streak"] = (last + 2 * one, "%d minutes today keeps your streak going." % mins)
+    out = {}
+    for sid, (day, text) in plan.items():
+        at = local_time(day, hhmm, tz)
+        if at > now:
+            out[sid] = {"at": at, "title": "Learning", "text": text, "click": link}
+    return out
+
+
+def ntfy_call(method, url, headers=None, body=b"", timeout=10):
+    """None when ntfy answered 2xx, else why not."""
+    from urllib.request import Request, urlopen
+    try:
+        with urlopen(Request(url, data=body if method != "GET" else None, headers=headers or {}, method=method), timeout=timeout) as r:
+            return None if 200 <= r.status < 300 else "HTTP %d" % r.status
+    except Exception as e:   # HTTPError, URLError, timeouts, a bad server URL
+        return str(getattr(e, "code", "") or e)[:200]
+
+
+def ntfy_target(prof):
+    n = prof.get("ntfy") if isinstance(prof.get("ntfy"), dict) else {}
+    server = n.get("server") if isinstance(n.get("server"), str) and n.get("server") else NTFY_DEFAULT
+    topic = n.get("topic")
+    return server.rstrip("/"), topic if isinstance(topic, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", topic) else None
+
+
+def nudge_state(root):
+    try:
+        with open(os.path.join(root, NUDGE_STATE), "r", encoding="utf-8") as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def nudge_send(root, now=None, ready=False, link=None):
+    """Republish daily and streak. Sends only what changed since the last publish; never reads back."""
+    prof = read_profile(root)
+    server, topic = ntfy_target(prof)
+    if prof.get("reminders") != "ntfy" or not topic:
+        return {"ok": True, "reminders": prof.get("reminders", "none"), "sent": []}
+    now = time.time() if now is None else now
+    out = {"ok": True, "sent": [], "unchanged": [], "passed": [], "failed": {}}
+    with file_lock(os.path.join(root, NUDGE_LOCK), _nudge_lock):
+        plan, last = nudge_plan(root, prof, now, ready, link), nudge_state(root)
+        for sid in NUDGE_IDS:
+            m = plan.get(sid)
+            if not m:
+                out["passed"].append(sid)
+                continue
+            key = dict(m, server=server, topic=topic)
+            if last.get(sid) == key:
+                out["unchanged"].append(sid)
+                continue
+            headers = {"At": str(m["at"]), "Title": m["title"], "Content-Type": "text/plain; charset=utf-8"}
+            if m["click"]:
+                headers["X-Click"] = m["click"]
+            why = ntfy_call("POST", "%s/%s/%s" % (server, topic, sid), headers, m["text"].encode("utf-8"))
+            if why:
+                out["failed"][sid] = why
+            else:
+                last[sid] = key
+                out["sent"].append(sid)
+            out[sid] = datetime.fromtimestamp(m["at"], timezone.utc).isoformat().replace("+00:00", "Z")
+        write_atomic(os.path.join(root, NUDGE_STATE), (json.dumps(last, sort_keys=True) + "\n").encode("utf-8"))
+    return out
+
+
+def ics_text(prof, link, stamp):
+    """One daily event at the reminder time, in floating local time: it rings at that hour wherever the learner is."""
+    mins = prof.get("session_minutes") if prof.get("session_minutes") in (5, 10) else 5
+    start = local_today(stamp, prof.get("tz"))
+
+    def esc(t):
+        return t.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+    def fold(line):   # 75 octets a line, continuation lines start with a space
+        b, parts = line.encode("utf-8"), []
+        while len(b) > 75:
+            cut = 75 if not parts else 74
+            while cut and (b[cut] & 0xC0) == 0x80:
+                cut -= 1
+            parts.append(b[:cut])
+            b = b[cut:]
+        parts.append(b)
+        return b"\r\n ".join(parts).decode("utf-8")
+
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//learn skill//reminder//EN", "CALSCALE:GREGORIAN",
+             "BEGIN:VEVENT", "UID:learn-reminder-%s@learn" % secrets.token_hex(8),
+             "DTSTAMP:%s" % datetime.fromtimestamp(stamp, timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+             "DTSTART:%s%s00" % (start.strftime("%Y%m%dT"), prof["reminder_time"].replace(":", "")),
+             "DURATION:PT%dM" % mins, "RRULE:FREQ=DAILY",
+             "SUMMARY:%s" % esc("%d minutes of learning" % mins),
+             "DESCRIPTION:%s" % esc("Your next lesson or review. Skip it on days you have already practiced.")]
+    if link:
+        lines.append("URL:%s" % link)
+    lines += ["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:%s" % esc("%d minutes of learning" % mins),
+              "TRIGGER:PT0M", "END:VALARM", "END:VEVENT", "END:VCALENDAR"]
+    return "".join(fold(l) + "\r\n" for l in lines)
+
+
 # ---------------------------------------------------------------- server
 class Server(ThreadingHTTPServer):
     daemon_threads = True
@@ -626,6 +865,32 @@ class Server(ThreadingHTTPServer):
         self.name = local_name() if lan else None   # read once: a rename needs a restart
         self.ts_hosts = {ts, ts + ":443"} if ts else set()   # Tailscale Serve is https on 443
         self.ts_logged = False
+        self.nudging, self.nudge_again = False, False   # one republish thread at a time; a Finish meanwhile runs it once more
+        self.nudge_mutex = threading.Lock()
+
+    def nudge_soon(self):
+        """Republish the nudges in the background after Finish lesson; the page never waits for ntfy."""
+        with self.nudge_mutex:
+            if self.nudging:
+                self.nudge_again = True
+                return
+            self.nudging = True
+        threading.Thread(target=self.nudge_loop, daemon=True).start()
+
+    def nudge_loop(self):
+        while True:
+            try:
+                out = nudge_send(self.root)
+                if out.get("failed"):
+                    sys.stderr.write("%s nudge: not sent (%s); the old ones stay queued\n"
+                                     % (time.strftime("%H:%M:%S"), ", ".join("%s: %s" % kv for kv in sorted(out["failed"].items()))))
+            except (Exception, SystemExit) as e:
+                sys.stderr.write("%s nudge: %s\n" % (time.strftime("%H:%M:%S"), e))
+            with self.nudge_mutex:
+                if not self.nudge_again:
+                    self.nudging = False
+                    return
+                self.nudge_again = False
 
     def allowed(self, host):
         """127.0.0.1 always; with tailscale the ts.net name; under lan also the .local name and the current
@@ -779,6 +1044,8 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as e:
             sys.stderr.write("write failed: %s\n" % e)
             return self.reply(500, {"error": "write failed"})
+        if what == "api/state" and any(k.startswith("finish:") for k in merged):
+            self.server.nudge_soon()
         return self.reply(200, {"schema": SCHEMA, "records": merged})
 
 
@@ -1173,6 +1440,80 @@ def cmd_tailscale(args):
     return restart_note({"ok": True, "tailscale": name}, cfg)
 
 
+def parse_now(text):
+    if text is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise SystemExit("--now: not an ISO time: %r" % text)
+    return (dt if dt.tzinfo else dt.astimezone()).timestamp()
+
+
+def cmd_nudge(args):
+    root = real_root(args.root)
+    prof = read_profile(root)
+    now = parse_now(args.now)
+    if args.link and safe_link(root, args.link):
+        return say({"ok": False, "error": safe_link(root, args.link)}, 2)
+    if args.action == "send":
+        return say(nudge_send(root, now, args.ready, args.link))
+    server, topic = ntfy_target(prof)
+    if args.action == "off":
+        failed = {}
+        if topic:
+            for sid in NUDGE_IDS:
+                why = ntfy_call("DELETE", "%s/%s/%s" % (server, topic, sid))
+                if why:
+                    failed[sid] = why
+        prof["reminders"] = "none"
+        save_profile(root, prof)
+        try:
+            os.unlink(os.path.join(root, NUDGE_STATE))
+        except FileNotFoundError:
+            pass
+        out = {"ok": True, "reminders": "none"}
+        if failed:
+            out["warning"] = "a queued nudge could not be cancelled (%s); it may still arrive once" % ", ".join(sorted(failed))
+        return say(out)
+    # on
+    hhmm = args.time or prof.get("reminder_time")
+    if not isinstance(hhmm, str) or not TIME_RE.fullmatch(hhmm):
+        return say({"ok": False, "error": "give the reminder time as --time HH:MM (24-hour)"}, 2)
+    server = (args.server or server).rstrip("/")
+    if not server.startswith(("https://", "http://")):
+        return say({"ok": False, "error": "--server must be an http(s) URL"}, 2)
+    topic = topic or "learn-" + secrets.token_hex(10)
+    prof.update(reminders="ntfy", reminder_time=hhmm, ntfy={"server": server, "topic": topic})
+    why = ntfy_call("POST", "%s/%s" % (server, topic), {"Title": "Learning", "Content-Type": "text/plain; charset=utf-8"},
+                    ("Reminders are on. On a day you skip, one comes at %s." % hhmm).encode("utf-8"))
+    if why:
+        return say({"ok": False, "error": "ntfy did not take a test message (%s); reminders stay as they were" % why}, 2)
+    save_profile(root, prof)
+    try:
+        os.unlink(os.path.join(root, NUDGE_STATE))   # a new time or topic: publish both again
+    except FileNotFoundError:
+        pass
+    out = nudge_send(root, now, False, args.link)
+    out.update(reminders="ntfy", reminder_time=hhmm, subscribe="%s/%s" % (server, topic), topic=topic)
+    return say(out)
+
+
+def cmd_ics(args):
+    root = real_root(args.root)
+    prof = read_profile(root)
+    if args.link and safe_link(root, args.link):
+        return say({"ok": False, "error": safe_link(root, args.link)}, 2)
+    hhmm = args.time or prof.get("reminder_time")
+    if not isinstance(hhmm, str) or not TIME_RE.fullmatch(hhmm):
+        return say({"ok": False, "error": "give the reminder time as --time HH:MM (24-hour)"}, 2)
+    prof.update(reminders="ics", reminder_time=hhmm)
+    path = os.path.join(root, "reminder.ics")
+    write_atomic(path, ics_text(prof, args.link, time.time()).encode("utf-8"), 0o644)
+    save_profile(root, prof)
+    return say({"ok": True, "reminders": "ics", "reminder_time": hhmm, "file": path})
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd")
@@ -1206,6 +1547,20 @@ def main(argv=None):
     p.add_argument("mode", choices=("on", "off"))
     p.add_argument("--root", required=True)
     p.set_defaults(fn=cmd_tailscale)
+    p = sub.add_parser("nudge")
+    p.add_argument("action", choices=("send", "on", "off"))
+    p.add_argument("--root", required=True)
+    p.add_argument("--time", help="on: the reminder time, HH:MM")
+    p.add_argument("--server", help="on: the ntfy server (default %s)" % NTFY_DEFAULT)
+    p.add_argument("--ready", action="store_true", help="send: the daily nudge says the next lesson is ready")
+    p.add_argument("--link", help="a Claude hosted page's URL to open from the nudge")
+    p.add_argument("--now", help=argparse.SUPPRESS)   # checks only: an ISO time to plan from
+    p.set_defaults(fn=cmd_nudge)
+    p = sub.add_parser("ics")
+    p.add_argument("--root", required=True)
+    p.add_argument("--time")
+    p.add_argument("--link")
+    p.set_defaults(fn=cmd_ics)
     p = sub.add_parser("new-token")
     p.add_argument("--root", required=True)
     p.set_defaults(fn=cmd_new_token)

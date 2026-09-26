@@ -3,6 +3,7 @@ name: learn
 description: Tutor for one concept at a time. Builds a phone-friendly lesson page (short lessons: a guess, then a picture, few words, questions with answer boxes), grades what the learner typed, brings passed rules back as spaced review, and keeps a terse record in their Obsidian vault. One page per goal, its topics grouped in the sidebar.
 disable-model-invocation: true
 argument-hint: "<topic> [source: path or url]"
+compatibility: "Needs a shell. Optional: Python 3.7+ (local server), curl (ntfy reminders), launchd, systemd or Task Scheduler (prepare-ahead run; launchd or systemd also keep the server running for a phone)."
 ---
 
 # Learn
@@ -11,17 +12,20 @@ Teach one concept cluster until the learner can use it. Understanding, not recal
 
 ## The learner
 
-Wants: pictures, few words, simple terms, no mannered prose, plain dashes (never em dashes). Does lessons on laptop and phone. Likes multiple choice where it fits and interview questions where it matters. "Just tell me" always gets the answer.
+Defaults, for every learner: a picture before prose, few words, simple terms, no mannered prose, plain dashes (never em dashes). "Just tell me" always gets the answer. The learner's own settings and preferences are in their profile (Profile and first run); where they differ from these defaults, the profile wins.
 
 ## The loop
 
-Learner: opens the page, reads the picture, does the questions, presses **Finish lesson**. That writes a finish marker, so the next run finds the lesson without being told. On a page opened from disk, Finish lesson also copies a block to paste with `done`. The terminal words still work: `done` (with a block from Finish lesson or **Copy answers**, or none when the answers reach the files or a database), `stuck`, `too easy`, `too hard`, `just tell me`, `next`. The page carries most of them too: Hint and Show me on each question, and a too easy / about right / too hard row on each lesson.
+Learner: opens the page, reads the picture, does the questions, presses **Finish lesson**. That writes a finish marker, so the next run finds the lesson without being told. On a page opened from disk, Finish lesson also copies a block to paste with `done`. The terminal words still work: `done` (with a block from Finish lesson or **Copy answers**, or none when the answers reach the files or a database), `stuck`, `too easy`, `too hard`, `just tell me`, `next`, `settings`. The page carries most of them too: Hint and Show me on each question, and a too easy / about right / too hard row on each lesson.
 
-You: grade finished lessons first, then the review answers, write feedback under each question, write the next lesson, update the vault note, save. The terminal is the control channel and gets one line. Everything readable goes on the page.
+You: grade finished lessons first, then the review answers, write feedback under each question, write the next lesson, update the vault note, save. The terminal is the control channel and gets one line (plus the settings line on a first run). Everything readable goes on the page.
 
 ## Files
 
 ```
+~/Learning/profile.json                 the learner's profile (Profile and first run)
+~/Learning/serve.json, serve.log,       serve.py's own files (port, token, log, pid, lock); never edit them
+  serve.pid, .ensure.lock
 ~/Learning/<goal-slug>/index.html       the goal page, one file for all the goal's topics, source of truth
 ~/Learning/<goal-slug>/answers.json     the goal's answers, keyed by question id
 ~/Learning/<goal-slug>/state.json       page state: finish markers, resume point, session log. Both files are written only
@@ -29,10 +33,44 @@ You: grade finished lessons first, then the review answers, write feedback under
 ~/Learning/<goal-slug>/.write.lock      serve.py's locks; .run.lock is there only while a run grades
 ~/Learning/<goal-slug>/.run.lock
 ~/Learning/<goal-slug>/sandbox/         code topics only: NN-<slug>/ with a stub to fill in and check.py (prints one line per case, ends PASS or FAIL, exit 0 or 1)
-~/Obsidian Vault/.../<Goal>.md          the record: goal, source, lessons, misconceptions, page path
+<notes folder>/.../<Goal>.md           the record: goal, source, lessons, misconceptions, page path
 ```
 
-Nothing else. `serve.py` is `scripts/serve.py` in this skill's folder; run it with `python3`. Each command prints one JSON line. On every tier, `answers.json` exists once a pasted block has been merged, and `state.json` once a block from Finish lesson (which carries `state`) has been merged too: on a page opened from disk they are your record, and the page never reads them.
+Nothing else. `~/Learning` is the learning root: the default, or the folder the learner picked (Profile and first run). `serve.py` is `scripts/serve.py` in this skill's folder; run it with the profile's `python` command. Each command prints one JSON line. On every tier, `answers.json` exists once a pasted block has been merged, and `state.json` once a block from Finish lesson (which carries `state`) has been merged too: on a page opened from disk they are your record, and the page never reads them.
+
+## Profile and first run
+
+Every run starts by reading the profile. It is `profile.json` in the learning root: `~/Learning/profile.json`, unless `~/.config/learn/root` (under `$XDG_CONFIG_HOME` when set) holds another folder's path, which is then the learning root. The profile is JSON (the notes on the right are not part of it):
+
+```
+{
+  "schema": 1,
+  "notes": "~/Obsidian Vault",   the notes folder: an Obsidian vault or any markdown folder
+  "python": "python3",           the command that passed the Python check, or null
+  "session_minutes": 5,          5 or 10 (Lessons)
+  "mix": "balanced",             balanced | more choice | more own words (Lessons)
+  "confidence": "default",       default | all (Confidence tag)
+  "prefers": "",                 the learner's own words on how they like to learn, added to The learner's defaults
+  "tz": "America/Denver",        the machine's time zone (IANA name)
+  "reminders": "none",           none for now: reminders come in a later version
+  "reminder_time": null,
+  "phone": "none",               none, or hosted when a goal is on a Claude hosted page
+  "prepare_ahead": null          null for now: the prepare-ahead run comes in a later version
+}
+```
+
+**No profile: first run.** Don't hold the lesson for a questionnaire. Write the profile at once from the defaults above plus anything the learner has already said (a longer session, more multiple choice, "tag everything", where their notes live), then carry on with what they asked. Before writing it:
+
+- **Learning root.** `~/Learning`, unless the learner named another folder: then write that path to `~/.config/learn/root`. If the folder is inside iCloud Drive, Dropbox, OneDrive or Google Drive, tell them to set it to stay on this device, and to run the server on one computer only: those services make conflict copies of files written on two machines, they don't merge them.
+- **Notes folder.** The folder the learner named; else an Obsidian vault, found by looking for a `.obsidian` folder in `~` and one level under it (`~/Obsidian Vault` is the usual one); else `<learning root>/notes`. Use the vault's conventions when it is a vault (Vault note). Commit it after each change only when it is a git repository.
+- **Python check,** without side effects: on macOS, if `command -v python3` is `/usr/bin/python3`, run `xcode-select -p` first, and if that fails there is no Python (running that `python3` would open an installer); any other `python3` needs only the version test. On Windows try `py -3`, since `python.exe` can be a Store alias. Then `<command> -c 'import sys; print(sys.version_info >= (3, 7))'` must print `True`. Store the command that passed, or null.
+- **Time zone.** From the machine: `readlink /etc/localtime` (the part after `zoneinfo/`), `timedatectl show -p Timezone --value`, or `tzutil /g` on Windows.
+
+Then one line in the terminal after the usual one: where the profile is and the settings that shape lessons ("Settings in ~/Learning/profile.json: 5-minute lessons, a balanced mix, confidence tags on guesses and reviews. Say `settings` to change them."). A learner with goals but no profile (from before profiles) gets the same, with `notes` set to the folder that holds the goal's note, and no question.
+
+**`settings`.** Show the settings in a short list and change what the learner asks for. A change to `mix` or `session_minutes` shapes the next lesson written, never one already on the page. A change to `confidence` goes onto each goal page's `#app` the next time you write to it.
+
+**Updating it from behavior.** When what the learner does shows a different preference on 3 separate days, change that one setting, and say so in one sentence at the top of the next lesson you write, with the reason and how to undo it ("Lessons are now about 10 minutes: you opened I want more on three days. Say settings to change it."). Signals: text items left blank or answered in a few words while mc items are done → `more choice`; long text answers and too easy on auto-checked lessons → `more own words`; I want more, or two lessons finished in a sitting → `session_minutes: 10`; at 10 minutes, lessons left unfinished or marked too hard → back to 5. Something the learner says about how they like to learn goes into `prefers` in their words. A scheduled run never changes the profile: it leaves the change for the next interactive run.
 
 ## Goals and topics
 
@@ -45,8 +83,8 @@ Nothing else. `serve.py` is `scripts/serve.py` in this skill's folder; run it wi
 1. **Source.** If the learner names one, read it. If not, one research pass on the web to find one trusted source: the course guide, a textbook chapter, official docs. Facts, examples, and quiz numbers come from the source and cite it by section. No source, no lesson.
 2. **Goal.** One line, concrete: what they will be able to do. Ask if it is unclear; if the learner is not there, pick one from the source. The goal goes in the vault note and as one plain sentence at the top of lesson 0, in words the learner already has. Two optional lines go with it, taken from what the learner said and never waited for: the **horizon** (an exam date, "exam 2026-10-20", else "long term") and the **anchor**, an if-then habit ("after morning coffee, one review"; else `none`). Both lines go in the vault note, written out even when they are the defaults. The horizon sets the review gaps (Review).
 3. **Plan 3 to 6 lessons**, prerequisites first, each a concept lesson or a drill. Put the whole plan in the page's sidebar under one `.group` named after the topic. Write only lesson 0 now: its grade decides the help level and whether a prerequisite lesson is needed, so lesson 1 is written after it.
-4. **Lesson 0, "Where you're at."** Two or three short questions on the prerequisites, auto-checked or interview. A misconception already recorded in the vault is fair game when it is about a prerequisite; one about the goal's own topic waits for the lesson that teaches it (say so in that lesson's plan line). Never use the worked example a later lesson teaches with: the probe would show its result before the teaching. Skip it only if the learner just passed the prerequisite topic; then lesson 1 is the first one written.
-5. Copy `template.html` from this skill's folder into `~/Learning/<goal-slug>/index.html`, set the goal id, replace its placeholders, delete the sample lessons and sidebar groups you are not using (the review section stays, empty until a lesson passes), open the page (see Hosting), write the vault note, commit the vault, one line in the terminal.
+4. **Lesson 0, "Where you're at."** Two or three short questions on the prerequisites, auto-checked or interview. A misconception already recorded in the vault is fair game when it is about a prerequisite; one about the goal's own topic waits for the lesson that teaches it (say so in that lesson's line in the vault note). Never use the worked example a later lesson teaches with: the probe would show its result before the teaching. Skip it only if the learner just passed the prerequisite topic; then lesson 1 is the first one written.
+5. Copy `template.html` from this skill's folder into `~/Learning/<goal-slug>/index.html`, set the goal id, set `#app`'s `data-served` (served tier, see Hosting) and `data-confidence="all"` (when the profile's `confidence` is `all`), replace its placeholders, delete the sample lessons and sidebar groups you are not using (the review section stays, empty until a lesson passes), open the page (see Hosting), write the vault note, commit the vault, one line in the terminal.
 
 **Adding a topic to a goal:** same steps 1, 3 and 4 in the existing page: a new sidebar group after the last one, lessons numbered on from the goal's last lesson, its own "Where you're at" probe unless the learner just passed its prerequisite. The goal id, the earlier lessons and their answers stay as they are. Add the topic's lessons to the goal's vault note.
 
@@ -56,18 +94,18 @@ Returning to a goal: read the vault note, the page, and the goal's `answers.json
 
 On every run on an existing goal, before anything the learner asked for (starting a new goal skips this):
 
-1. **Lock.** Take the goal's run lock: `python3 <this skill's folder>/scripts/serve.py lock <goal folder>`. Exit 3 means a scheduled run is grading: say so in one line and stop. Unlock (`serve.py unlock <goal folder>`) when you are done, and also when you stop early. Without Python, skip the lock.
+1. **Lock.** Take the goal's run lock: `<python> <this skill's folder>/scripts/serve.py lock <goal folder>` (`<python>` is the profile's command). Exit 3 means a scheduled run is grading: say so in one line and stop. Unlock (`serve.py unlock <goal folder>`) when you are done, and also when you stop early. When the profile's `python` is null, skip the lock.
 2. **Find them.** Each `finish:<lesson>` record in `state.json` (on a hosted page, the database's `state` collection) whose `at` is newer than that section's `data-graded`, or whose section has none, is a finished lesson waiting for you. A pasted block with `done` is one too.
 3. **Grade each** as in Grading, oldest marker first. Then the review answers, as in Review.
 4. **Clear it.** After a successful grade, set the section's `data-graded` to the marker's `at`, copied exactly (the current time in the same form when there was no marker). That is the only way a wait ends: never write a state record for it, and leave the marker where it is. A grade that fails part way leaves `data-graded` alone, so the next run tries again.
 
-**Writing the records.** Never edit `answers.json` or `state.json` by hand or rewrite them whole: a phone can write between your read and your write. Everything goes through `serve.py merge`, which merges record by record under a lock. A pasted block goes in first, before you grade: `serve.py merge <goal folder> block -` with the block on stdin. It refuses a block from another goal's page. If Python is missing, grade from the block and skip the merge.
+**Writing the records.** Never edit `answers.json` or `state.json` by hand or rewrite them whole: a phone can write between your read and your write. Everything goes through `serve.py merge`, which merges record by record under a lock. A pasted block goes in first, before you grade: `serve.py merge <goal folder> block -` with the block on stdin. It refuses a block from another goal's page. If `python` is null, grade from the block and skip the merge.
 
 ## Lessons
 
-A lesson takes about 5 minutes.
+A lesson takes about the profile's `session_minutes`: 5 by default, and the counts below are for 5. At 10, a concept lesson has up to 200 words of prose and 3 or 4 questions after the predict item, and a drill 7 or 8 items. The profile's `mix` sets the questions after a concept lesson's predict item: `balanced` as below; `more choice`, exactly one in the learner's own words and the rest mc or num; `more own words`, all in the learner's own words. A probe follows it too (at least one text item under `more choice`, at least two under `more own words`). Drills stay auto-checked under every mix.
 
-**Older pages.** Whenever you write to an existing page (grading feedback included, even when no new lesson follows), first replace the page's `<style>` and `<script>` blocks with the ones in `template.html`, so the page runs the current script (an older one ignores `data-once` and never opens a `.reveal`). Replace its `section#how` and the comment at the top of the file with the template's too, so the page explains what its script now draws. A page without `section#review` also gets the template's review section (before `#cheat`) and its sidebar link (`#review-link`, under the progress bar). Keep everything else, `data-goal` above all. A page with no `data-goal` is from before goal pages: leave its script alone, since the current one runs nothing without a goal id, and tell the learner it needs rebuilding as a goal page. Lessons already written keep their shape: never rebuild one mid-lesson to fit a newer rule.
+**Older pages.** Whenever you write to an existing page (grading feedback included, even when no new lesson follows), first replace the page's `<style>` and `<script>` blocks with the ones in `template.html`, so the page runs the current script (an older one ignores `data-once` and never opens a `.reveal`). Replace its `section#how` and the comment at the top of the file with the template's too, so the page explains what its script now draws. A page without `section#review` also gets the template's review section (before `#cheat`) and its sidebar link (`#review-link`, under the progress bar). Keep everything else, `data-goal` above all. Set `#app`'s `data-served` and `data-confidence` as Hosting and the profile say. A page with no `data-goal` is from before goal pages: leave its script alone, since the current one runs nothing without a goal id, and tell the learner it needs rebuilding as a goal page. Lessons already written keep their shape: never rebuild one mid-lesson to fit a newer rule.
 
 - **Concept lesson.** One idea. It opens with one **predict item**, right after the title: an mc or num with `data-once`, asked before any teaching, on the lesson's own numbers. The learner gets one try; the page then shows the answer and opens the item's `.reveal`, which holds the picture. Then under 120 words of prose and 2 or 3 questions: explain it back, apply, break a wrong claim. At least one is in the learner's own words (a text answer you grade); the others may be mc or num where one answer is right. Never yes/no.
 - **Drill.** Picture or worked table, then 5 or 6 auto-checked items: multiple choice, a number, spot the error, or order the steps. The first one or two items reuse the previous lesson's own example or key term, so a label alone is not a retrieval. Items test only rules from passed lessons, even if the source table shows more. Where choosing the rule is the skill, a rule the learner has already used correctly (in the probe or an earlier answer) may come back as the choice to rule out; never one they have not met. While only one rule is passed, a "which rule fits" item has one real answer, so practice the choice inside that rule instead: spot the error (a trace that misapplies it) and order the steps. A wrong model the learner already rejected in an answer (the k^n reflex they explained away) is fair game as a spot-the-error trace or a wrong option: telling it apart on sight is part of the choice. Mix item types only where choosing which rule applies is the skill being practiced; a brand-new rule's items stay together. A worked table never answers a drill item. The page grades instantly; you read the wrong attempts for patterns.
@@ -85,7 +123,7 @@ A lesson takes about 5 minutes.
 
 - **Spot the error.** An mc whose `.opts` also has class `trace`: the options are the 3 to 8 lines of a worked trace, in order, each numbered in its `.key` and each with a `data-why` (why the line holds, or what it gets wrong). Exactly one line is wrong, and it is `data-answer`. The error is the one a real wrong model makes (your recorded misconceptions first), and the lines after it follow from it, so the trace reads as someone's honest work. Take the numbers from the source.
 - **Order the steps.** `data-kind="order"`, with `data-answer` the keys in the one valid order (`"b d a c"`), `data-why` and `data-hint`, and a `.steps` of `button.step[data-key]` written scrambled, then `.fb`. The script adds the placed list and Check. Use it only where exactly one order works: a procedure whose steps depend on each other, never a list whose order is a convention. 3 to 6 steps, each a short line naming an action, not its result, so the item does not hand over a number another item asks for. The value it records is the placed keys with spaces. Not a review item: review stays mc or num.
-- **Confidence tag.** The page asks "How sure?" (sure / think so / guess) above the answer on every item in a probe, every `data-once` item and every review item; `#app[data-confidence="all"]` turns it on everywhere. An mc, num or order item takes no first attempt until it is tagged, and the tag locks with that attempt; a text item's tag can change, so read it when you grade. It lands in the answer record as `confidence`. You write nothing for it.
+- **Confidence tag.** The page asks "How sure?" (sure / think so / guess) above the answer on every item in a probe, every `data-once` item and every review item; `#app[data-confidence="all"]` turns it on everywhere. The profile's `confidence: all` is how you set that attribute; `default` leaves it off. An mc, num or order item takes no first attempt until it is tagged, and the tag locks with that attempt; a text item's tag can change, so read it when you grade. It lands in the answer record as `confidence`. You write nothing for it.
 
 ## Review
 
@@ -128,9 +166,13 @@ Everything factual traces to the source, the `data-why` line under every option 
 
 ## Hosting
 
-Default: the page opens from disk (`open`, `xdg-open`, or the browser; if you cannot open it, give the path). Answers live in that browser's localStorage and reach you through the block that Finish lesson copies. Saving the file is the whole publish step; tell the learner to reload. A page served by `serve.py` (`#app[data-served]`) reloads itself when you save a new `index.html`.
+Each goal has one tier. The page's `#app[data-served]` marks a served goal; a URL in the vault note's `page:` line marks a hosted one; anything else is local.
 
-If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone instead. Read `references/hosted.md` before the first publish. Pick the tier on the first publish, record it in the vault note's `page:` line, keep it for the goal.
+- **Served,** the default when the profile's `python` is set. At the start of every interactive run on a served goal, or before opening a new one, run `<python> <this skill's folder>/scripts/serve.py ensure --root <learning root>`. It starts the goal server if none is running (the server keeps running after you exit) and prints a `url`; the goal's link is that `url` plus `<goal-slug>/` (`http://127.0.0.1:<port>/<token>/<goal-slug>/`). Open that link (`open`, `xdg-open`, or the browser), never a `localhost` or file:// one: each is its own browser storage. The link holds the server's token, so give it in the terminal and never in the vault note or a committed file; `page:` stays the file path. The page reads and writes `answers.json` and `state.json` through the server, and reloads itself when you save a new `index.html`. If `ensure` prints `ok: false`, give its error in one line and open the file instead: the page says that copy is not connected and keeps answers in the browser, with Copy answers.
+- **Local,** when `python` is null. The page opens from disk (if you cannot open it, give the path). Answers live in that browser's localStorage and reach you through the block that Finish lesson copies. Saving the file is the whole publish step; tell the learner to reload.
+- **Hosted.** If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone with the laptop off. Read `references/hosted.md` before the first publish, and put the URL in `page:`. Offer it only when the learner asks to use the phone away from the laptop.
+
+A tier is picked when the goal starts and kept, with one change: a local goal whose learner now has `python` becomes served the next time you write to its page (add `data-served`, run `ensure`, open the served link). A run that writes nothing leaves it local. The old copy keeps its answers in that browser: when opened from disk it now says it is not connected and offers Copy answers, so the terminal line says to paste from there anything typed since the learner last pressed Finish lesson or Copy answers.
 
 The page stays one file: inline style and script, system fonts, no external assets, and no requests except to its own origin's `api/`. Keep the template's structure; the comment at its top lists what you edit and what the script derives. An item showing "This item is broken" has bad markup (unknown `data-kind`, a missing part, a bad or repeated `data-q`, or no goal id on the page); fix it.
 

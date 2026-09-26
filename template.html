@@ -22,12 +22,13 @@
     the strip at the top of each lesson (number, type, help level, note), sidebar dots and status,
     the progress bar, prev/next links, sidebar links for lessons that have no section yet (shown as planned),
     aria-live on the lines it writes (.fb, .save, .score, the sync line),
-    the answer store: every write lands in localStorage first; with a host database (hosted tier) it also
-      goes into an outbox that resends until the database confirms it. Two copies of one answer merge:
-      the newer at wins, attempt histories are joined, value and correct follow the latest attempt.
-      Numeric drafts are saved and restored.
-    the sync line and the Copy answers button (every lesson on the local tier; on the hosted tier, the
-      current lesson while answers wait to send),
+    the record store: every write lands in localStorage first, then goes to a store: a host database when
+      the page runs on a host (hosted tier), else the goal's own server (served tier: #app[data-served] on
+      an http page, api/answers and api/state beside the page), else none (local tier). With a store, an outbox
+      resends each write until the store confirms it. Two copies of one record merge: the newer at wins,
+      attempt histories are joined, value and correct follow the latest attempt. Numeric drafts are saved.
+    the sync line and the Copy answers button (every lesson on the local tier; on the served and hosted
+      tiers, the current lesson while answers wait to send),
     a "This item is broken" note on any .q it cannot run (unknown data-kind, a missing part, a bad or repeated data-q).
 -->
 <style>
@@ -373,7 +374,7 @@
         <li><b>One page per topic.</b> Lessons are listed in the sidebar in order. A filled dot is passed, a ringed dot is the one to do now, grey is not written yet.</li>
         <li><b>Picture first.</b> Read the picture before the words. The caption points at the one thing to look at.</li>
         <li><b>Two kinds of lesson.</b> A concept lesson ends with questions you answer in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
-        <li><b>Your answers save as you type.</b> When the page is hosted by a tool that can store them, they sync across your devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which. If some answers are not sent yet, it says how many, and Copy answers appears on the lesson.</li>
+        <li><b>Your answers save as you type.</b> When the page is served from your computer, or hosted by a tool that can store them, they are saved there and reach your other devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which. If some answers are not sent yet, it says how many, and Copy answers appears on the lesson.</li>
         <li><b>When you finish a lesson, say <code>done</code> in the terminal.</b> On a local page, press <b>Copy answers</b> first and paste them with <code>done</code>. Feedback appears under each question, the next lesson unlocks, and the vault note gets the record.</li>
         <li><b>Other words the terminal understands:</b> <code>stuck</code> (more help now), <code>too easy</code> or <code>too hard</code> (change the help level), <code>just tell me</code> (get the answer), <code>next</code> (move on).</li>
         <li><b>Help level.</b> Each lesson shows one: 3 worked example, 2 outline, 1 bare, 0 you define the check. Two clean lessons in a row moves it down. Getting stuck moves it up.</li>
@@ -466,235 +467,395 @@
   menu.addEventListener('click', function () { side.classList.contains('open') ? closeMenu() : openMenu(); });
   backdrop.addEventListener('click', closeMenu);
 
-  /* ---------- answer records ----------
-     One record per question, keyed by its data-q:
-       {lesson, q, kind, value, correct, attempts, at, history: [{at, value, correct}]}, plus draft on a num item
-     value and correct: the latest checked attempt (mc, num) or the current text (text, correct stays null).
-     history: one entry per option click or Check press, oldest first. Text answers add none.
-     Two copies of one record merge: the newer at wins the fields, the histories are joined by at without
-     duplicates, attempts is the larger count, and value and correct follow the latest attempt (a solved
-     item drops its draft). A missing or invalid at counts as oldest. */
+  /* ---------- records ----------
+     Two collections, each a map of keyed records. Every copy (this page, other devices, the goal's files,
+     a host database) merges them the same way, so all copies end up equal:
+       answers, keyed by data-q: {lesson, q, kind, value, correct, attempts, at, history: [{at, value, correct}]},
+         plus draft on a num item. value and correct: the latest checked attempt (mc, num) or the current text
+         (text, correct stays null). history: one entry per option click or Check press, oldest first. Text
+         answers add none.
+       state, keyed by name: finish:<lesson>, resume, session:<date>:<device> (<device> is a short random id
+         kept per browser), each an object with its own at. The page writes none of these yet.
+     Every at is UTC as toISOString() writes it: YYYY-MM-DDTHH:MM:SS.sssZ. Anything else counts as oldest.
+     Merge: the copy with the newer at wins the fields. A tie goes to the larger canonical JSON (sorted keys,
+     no spaces, compared as UTF-16 code units), so every copy picks the same one. Answers also join their
+     histories (one entry per at, the larger canonical JSON on a clash, sorted by time, then by the at text),
+     keep the larger attempts count, and take value and correct from the latest attempt; a solved item drops
+     its draft. Nothing is ever deleted. */
+  var SCHEMA = 1;   /* the record format; the goal's server sends and expects the same number */
+  var AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
   function time(at) {
-    var t = typeof at === 'string' ? Date.parse(at) : NaN;
+    var t = typeof at === 'string' && AT.test(at) ? Date.parse(at) : NaN;
     return isNaN(t) ? -Infinity : t;
   }
+  /* a record id is a store key and a database path segment */
+  function usable(id) { return typeof id === 'string' && /^[A-Za-z0-9_.~:@+-]{1,200}$/.test(id) && id !== '.' && id !== '..'; }
   function flag(x) { return x === true || x === false ? x : null; }
-  function clean(d) {
-    if (!d || typeof d !== 'object') return null;
+  function canon(x) {
+    if (Array.isArray(x)) return '[' + x.map(canon).join(',') + ']';
+    if (x && typeof x === 'object') {
+      return '{' + Object.keys(x).sort().filter(function (k) { return x[k] !== undefined; })
+        .map(function (k) { return JSON.stringify(k) + ':' + canon(x[k]); }).join(',') + '}';
+    }
+    return x === undefined ? 'null' : JSON.stringify(x);
+  }
+  function same(a, b) { return canon(a) === canon(b); }
+  function winner(a, b) {
+    var ta = time(a.at), tb = time(b.at);
+    if (ta !== tb) return tb > ta ? b : a;
+    return canon(b) > canon(a) ? b : a;
+  }
+  function fields(d) {
     var r = {}, k;
-    for (k in d) r[k] = d[k];
-    r.value = d.value === undefined ? null : d.value;
-    r.correct = flag(d.correct);
-    r.attempts = typeof d.attempts === 'number' && d.attempts > 0 ? d.attempts : 0;
-    r.history = (Array.isArray(d.history) ? d.history : [])
-      .filter(function (h) { return h && typeof h === 'object'; })
-      .map(function (h) { return { at: h.at, value: h.value === undefined ? null : h.value, correct: flag(h.correct) }; });
-    if (typeof r.draft !== 'string') delete r.draft;
+    for (k in d) if (k !== '__proto__') r[k] = d[k];
     return r;
   }
   function joinHistory(a, b) {
-    var seen = {}, out = [];
+    var byAt = Object.create(null);
     a.concat(b).forEach(function (h) {
       var k = String(h.at);
-      if (!seen[k]) { seen[k] = true; out.push(h); }
+      if (!byAt[k] || canon(h) > canon(byAt[k])) byAt[k] = h;
     });
-    return out.map(function (h, i) { return { h: h, i: i }; })
-      .sort(function (x, y) { return (time(x.h.at) - time(y.h.at)) || (x.i - y.i); })
-      .map(function (x) { return x.h; });
+    return Object.keys(byAt).map(function (k) { return byAt[k]; }).sort(function (x, y) {
+      var tx = time(x.at), ty = time(y.at), sx = String(x.at), sy = String(y.at);
+      return tx !== ty ? (tx < ty ? -1 : 1) : sx < sy ? -1 : sx > sy ? 1 : 0;
+    });
   }
-  function merge(a, b) {
-    if (!a || !b) return a || b;
-    var newer = time(b.at) > time(a.at) ? b : a, r = {}, k;
-    for (k in newer) r[k] = newer[k];
-    r.history = joinHistory(a.history, b.history);
-    r.attempts = Math.max(a.attempts, b.attempts, r.history.length);
-    /* value and correct stay the latest attempt, even when the newer copy only changed a draft;
-       a copy with no history (an older page) keeps its own value */
-    var last = r.history[r.history.length - 1];
-    if (last && (newer.history.length || newer.value == null)) { r.value = last.value; r.correct = last.correct; }
-    if (r.correct === true) delete r.draft;   /* a solved item has nothing left to check */
-    return r;
-  }
-  function same(a, b) {
-    if (!a || !b) return a === b;
-    return a.at === b.at && JSON.stringify(a.value) === JSON.stringify(b.value) && a.correct === b.correct &&
-      a.draft === b.draft && a.attempts === b.attempts && a.history.length === b.history.length;
-  }
+  var RECORDS = {
+    answers: {
+      clean: function (d) {
+        if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+        var r = fields(d);
+        r.value = d.value === undefined ? null : d.value;
+        r.correct = flag(d.correct);
+        r.attempts = typeof d.attempts === 'number' && d.attempts > 0 ? d.attempts : 0;
+        r.history = (Array.isArray(d.history) ? d.history : [])
+          .filter(function (h) { return h && typeof h === 'object'; })
+          .map(function (h) { return { at: h.at === undefined ? null : h.at, value: h.value === undefined ? null : h.value, correct: flag(h.correct) }; });
+        if (typeof r.draft !== 'string') delete r.draft;
+        return r;
+      },
+      merge: function (a, b) {
+        if (!a || !b) return a || b;
+        var newer = winner(a, b), r = fields(newer);
+        r.history = joinHistory(a.history, b.history);
+        r.attempts = Math.max(a.attempts, b.attempts, r.history.length);
+        /* value and correct stay the latest attempt, even when the newer copy only changed a draft;
+           a copy with no history (an older page) keeps its own value */
+        var last = r.history[r.history.length - 1];
+        if (last && (newer.history.length || newer.value == null)) { r.value = last.value; r.correct = last.correct; }
+        if (r.correct === true) delete r.draft;   /* a solved item has nothing left to check */
+        return r;
+      }
+    },
+    state: {
+      clean: function (d) { return d && typeof d === 'object' && !Array.isArray(d) ? fields(d) : null; },
+      merge: function (a, b) { return !a || !b ? a || b : winner(a, b); }
+    }
+  };
 
-  /* ---------- answer store ----------
-     Local tier: localStorage is the only copy. Hosted tier (the host exposes a database, hook below): each
-     write also goes into an outbox kept in localStorage, keyed by question id, and leaves it only once the
-     database has confirmed that version. Writes wait for one good read of the database, so an older copy
-     on this device never replaces a newer one there. */
+  /* ---------- record store ----------
+     Every write lands in localStorage first. Then it goes to one store:
+       hosted: the page runs on a host that gives it a database (hook below): collections answers and state,
+         one document per record, kept in step between open devices by onSnapshot. This wins even with
+         data-served, since a served page can also be published to a host.
+       served: the page has #app[data-served] and came over http(s), so the goal's own server holds the records
+         in the goal folder. GET <page folder>/api/answers (or api/state) gives {schema, records}; a POST of
+         {schema, records} as JSON merges each record there and answers with the merged copies.
+       local: neither; localStorage is the only copy, and the learner hands answers over with Copy answers.
+     With a store, each write also goes into an outbox kept in localStorage, keyed by record id, and leaves it
+     only once the store has confirmed that version. Writes wait for one good read of the store, so an older
+     copy on this device never replaces a newer one there. The outbox is retried on load, on the online event
+     and when the page becomes visible; a served page, which gets no live updates, reads the store again then. */
   var store = (function () {
-    var key = 'learn:' + topic, outKey = key + ':outbox';
-    /* host database hook. Claude artifacts expose window.claude.use('db') (called in start below);
-       add other hosts here and there. */
-    var host = !!(window.claude && typeof window.claude.use === 'function');
-    var tier = host ? 'connecting' : 'local';   /* connecting: not yet known whether a database exists */
-    var db = null, readOk = false, readFailed = false, reading = false, sending = false;
-    var unsub = null, liveOver = false, retryTimer = null, retryUsed = false;
-    var onStatus = function () {}, onRemote = function () {};
-    var WAIT = 15000;   /* a database call with no answer by then counts as failed; the answer stays queued */
+    var NAMES = ['answers', 'state'];
+    var base = 'learn:' + topic;
+    var KEY = { answers: base, state: base + ':state' };
+    var OUT = { answers: base + ':outbox', state: base + ':state:outbox' };
+    var WAIT = 15000;   /* a store call with no answer by then counts as failed; the record stays queued */
+    var MAXBODY = 250000;   /* characters of records per request to the goal's server */
     var FINAL = { invalid_argument: 1, transform_error: 1, quota_exceeded: 1, revoked: 1,
                   not_granted: 1, capability_disabled: 1, capability_removed: 1 };
 
-    function load(k) { try { return JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch (e) { return {}; } }
+    /* adapters. read(name) and write(name, records by id) return promises of [{id, data}] (a write may give
+       null); watch(name, next, error) returns a stop function, and is null for a store with no live updates;
+       final(error) says retrying soon will not help. */
+    function docs(snap) {
+      return ((snap && snap.docs) || []).filter(function (d) { return d && d.exists; })
+        .map(function (d) { return { id: d.id, data: d.data() }; });
+    }
+    function hostedStore(db) {
+      return {
+        tier: 'hosted', batch: 1,   /* one write at a time per document */
+        read: function (name) { return db.collection(name).get().then(docs); },
+        write: function (name, recs) {
+          var id = Object.keys(recs)[0];
+          return db.doc(name + '/' + id).set(recs[id]).then(function () { return null; });
+        },
+        watch: function (name, next, error) {
+          return db.collection(name).onSnapshot(function (snap) { next(docs(snap)); }, error);
+        },
+        final: function (e) { return !!(e && FINAL[e.code]); }
+      };
+    }
+    function servedStore() {
+      /* the page's folder on this origin, token included; repeated slashes collapsed, so it never reads as //host */
+      var API = location.pathname.replace(/\/+/g, '/').replace(/\/(index\.html)?$/, '') + '/api/';
+      function ask(name, body) {
+        var o = { method: body ? 'POST' : 'GET', cache: 'no-store', credentials: 'same-origin' }, stop = null;
+        if (body) { o.headers = { 'Content-Type': 'application/json' }; o.body = JSON.stringify(body); }
+        if (typeof AbortController === 'function') {   /* a stalled request ends with the wait, so it never overlaps a retry */
+          var ctl = new AbortController();
+          o.signal = ctl.signal;
+          stop = setTimeout(function () { ctl.abort(); }, WAIT);
+        }
+        return fetch(API + name, o).then(function (res) {
+          clearTimeout(stop);
+          if (!res.ok) throw { code: 'http_' + res.status, status: res.status, message: name + ': HTTP ' + res.status };
+          return res.json();
+        }).then(function (reply) {
+          if (!reply || typeof reply !== 'object') throw { code: 'bad_reply', message: name + ': not a record reply' };
+          if (reply.schema !== SCHEMA) throw { code: 'schema', message: name + ': record format ' + reply.schema + ', this page knows ' + SCHEMA };
+          var recs = reply.records;
+          if (!recs || typeof recs !== 'object' || Array.isArray(recs)) throw { code: 'bad_reply', message: name + ': no records' };
+          return Object.keys(recs).map(function (id) { return { id: id, data: recs[id] }; });
+        });
+      }
+      return {
+        tier: 'served', batch: 200,
+        read: function (name) { return ask(name, null); },
+        write: function (name, recs) { return ask(name, { schema: SCHEMA, records: recs }); },
+        watch: null,
+        /* a refused request (a wrong token, a body too large) or a record format this page does not know */
+        final: function (e) { return !!e && (e.code === 'schema' || (e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429)); }
+      };
+    }
+
+    /* host database hook. Claude artifacts expose window.claude.use('db') (called in start below);
+       add other hosts here and there. A served page published to a host runs there, not on the goal server. */
+    var host = !!(window.claude && typeof window.claude.use === 'function');
+    var served = !host && app.hasAttribute('data-served') && /^https?:$/.test(location.protocol);
+    var adapter = served ? servedStore() : null;
+    var tier = served ? 'served' : host ? 'connecting' : 'local';   /* connecting: not yet known whether a database exists */
+    var readOk = false, readFailed = false, stale = false, reading = false, sending = false;
+    var live = {}, liveOver = {}, retryTimer = null, retryUsed = false;
+    /* collection/id of each write not settled yet, even after its wait ran out: one write at a time per record.
+       A write still out after four waits is given up on, so a store that never answers cannot block a record. */
+    var flying = Object.create(null);
+    var onStatus = function () {}, onRemote = function () {};
+
+    function map() { return Object.create(null); }   /* record ids as keys, never inherited names */
+    function load(k) {
+      var m = map(), o = null, id;
+      try { o = JSON.parse(localStorage.getItem(k) || '{}'); } catch (e) {}
+      if (o && typeof o === 'object' && !Array.isArray(o)) for (id in o) m[id] = o[id];
+      return m;
+    }
     function keep(k, obj) { try { localStorage.setItem(k, JSON.stringify(obj)); } catch (e) {} }
-    var cache = {}, saved = load(key), outbox = load(outKey), id, rec;
-    for (id in saved) { rec = clean(saved[id]); if (rec) cache[id] = rec; }
-    for (id in outbox) if (!cache[id]) delete outbox[id];
+    var cache = {}, outbox = {};
+    NAMES.forEach(function (n) {
+      var saved = load(KEY[n]), id, r;
+      cache[n] = map();
+      for (id in saved) { r = RECORDS[n].clean(saved[id]); if (r) cache[n][id] = r; }
+      outbox[n] = load(OUT[n]);
+      for (id in outbox[n]) if (!cache[n][id] || !usable(id)) delete outbox[n][id];   /* a stored id no store takes stays on this device */
+    });
 
     /* another open tab of this page may have saved since this one last read: fold its copies in first,
-       so saving here never erases an answer made there */
-    function fromDisk() {
-      var disk = load(key), changed = [], id, r, merged;
+       so saving here never erases a record made there */
+    function fromDisk(n) {
+      var disk = load(KEY[n]), c = cache[n], changed = [], id, r, merged;
       for (id in disk) {
-        r = clean(disk[id]);
+        r = RECORDS[n].clean(disk[id]);
         if (!r) continue;
-        merged = merge(cache[id], r);
-        if (!same(merged, cache[id])) { cache[id] = merged; changed.push(id); }
+        merged = RECORDS[n].merge(c[id], r);
+        if (!same(merged, c[id])) { c[id] = merged; changed.push(id); }
       }
       return changed;
     }
-    function save() {
-      var changed = fromDisk();
-      keep(key, cache);
-      if (changed.length) onRemote(changed);
+    function save(n) {
+      var changed = fromDisk(n);
+      keep(KEY[n], cache[n]);
+      if (changed.length) onRemote(n, changed);
     }
 
     function tell() { try { onStatus(); } catch (e) { if (window.console) console.error(e); } }
     /* a promise for fn(): rejects if fn throws or nothing answers within WAIT */
     function call(fn) {
       return new Promise(function (resolve, reject) {
-        var timer = setTimeout(function () { reject({ code: 'timeout', message: 'no answer from the database' }); }, WAIT);
+        var timer = setTimeout(function () { reject({ code: 'timeout', message: 'no answer from the store' }); }, WAIT);
         function settle(f) { return function (x) { clearTimeout(timer); f(x); }; }
         try { Promise.resolve(fn()).then(settle(resolve), settle(reject)); } catch (e) { settle(reject)(e); }
       });
     }
     function failed(what, e) {
-      if (window.console) console.warn('answers: ' + what + ' failed, kept on this device', e);
+      if (window.console) console.warn('records: ' + what + ' failed, kept on this device', e);
       /* one short randomized retry, as the database asks; after that the triggers below take over */
-      if (retryTimer || retryUsed || (e && FINAL[e.code])) return;
+      if (retryTimer || retryUsed || (adapter && adapter.final(e))) return;
       retryUsed = true;
       retryTimer = setTimeout(function () { retryTimer = null; kick(); }, 1500 + Math.random() * 2500);
     }
 
-    /* fold database copies into the cache; queue any record the database lacks or holds an older copy of */
-    function absorb(docs, whole) {
-      var changed = [], seen = {}, queued = false;
-      (docs || []).forEach(function (doc) {
-        var remote = doc && doc.exists ? clean(doc.data()) : null;
+    /* fold a store's copies into the cache. After a read or a live update, queue any record the store holds
+       an older copy of, and after a read also any it lacks. A write's reply only confirms: the store has
+       merged this version, so sending it again would change nothing there. */
+    function absorb(n, list, how) {
+      var R = RECORDS[n], c = cache[n], ob = outbox[n], changed = [], seen = map(), queued = false;
+      (list || []).forEach(function (d) {
+        var remote = d && usable(d.id) ? R.clean(d.data) : null;
         if (!remote) return;
-        var merged = merge(cache[doc.id], remote);
-        seen[doc.id] = true;
-        if (!same(merged, cache[doc.id])) { cache[doc.id] = merged; changed.push(doc.id); }
-        if (!same(merged, remote) && !(doc.id in outbox)) { outbox[doc.id] = merged.at; queued = true; }
+        var merged = R.merge(c[d.id], remote);
+        seen[d.id] = true;
+        if (!same(merged, c[d.id])) { c[d.id] = merged; changed.push(d.id); }
+        if (how !== 'reply' && !same(merged, remote) && !(d.id in ob)) { ob[d.id] = merged.at || null; queued = true; }
       });
-      if (whole) Object.keys(cache).forEach(function (id) {
-        if (!seen[id] && !(id in outbox)) { outbox[id] = cache[id].at; queued = true; }
+      if (how === 'read') Object.keys(c).forEach(function (id) {
+        if (!seen[id] && !(id in ob) && usable(id)) { ob[id] = c[id].at || null; queued = true; }
       });
-      if (changed.length) save();
-      if (queued) keep(outKey, outbox);
-      if (changed.length) onRemote(changed);
+      if (changed.length) save(n);
+      if (queued) keep(OUT[n], ob);
+      if (changed.length) onRemote(n, changed);
       return queued;
     }
 
     function read() {
-      if (!db || reading) return;
+      if (!adapter || reading) return;
       reading = true;
-      call(function () { return db.collection('answers').get(); }).then(function (snap) {
-        reading = false; readOk = true; readFailed = false;
-        absorb(snap && snap.docs, true);
+      Promise.all(NAMES.map(function (n) { return call(function () { return adapter.read(n); }); })).then(function (lists) {
+        reading = false; readOk = true; readFailed = false; stale = false;
+        NAMES.forEach(function (n, i) { absorb(n, lists[i], 'read'); });
         flush();
         tell();
       }, function (e) {
         reading = false; readFailed = true;
-        failed('reading answers', e);
+        failed('reading records', e);
         tell();
       });
     }
 
     /* live copies from other open devices go through the same merge */
     function subscribe() {
-      if (!db || unsub || liveOver) return;
-      var dead = false, stop;
-      try {
-        stop = db.collection('answers').onSnapshot(function (snap) {
-          /* never write from inside the callback: queue, then send on the next turn */
-          if (absorb(snap && snap.docs, false)) setTimeout(flush, 0);
-        }, function (e) {
-          dead = true; unsub = null;
-          if (e && FINAL[e.code]) liveOver = true;
-          if (window.console) console.warn('answers: live updates stopped', e);
-        });
-        if (!dead) unsub = typeof stop === 'function' ? stop : function () {};
-      } catch (e) { unsub = null; }
-    }
-
-    function send(id) {
-      var r = cache[id];
-      if (!r) { delete outbox[id]; keep(outKey, outbox); return Promise.resolve(); }
-      return call(function () { return db.doc('answers/' + id).set(r); }).then(function () {
-        /* leaves the queue only if the record did not change while it was on its way */
-        if (same(cache[id], r)) { delete outbox[id]; keep(outKey, outbox); }
+      if (!adapter || !adapter.watch) return;
+      NAMES.forEach(function (n) {
+        if (live[n] || liveOver[n]) return;
+        var dead = false, stop;
+        try {
+          stop = adapter.watch(n, function (list) {
+            /* never write from inside the callback: queue, then send on the next turn */
+            if (absorb(n, list, 'live')) setTimeout(flush, 0);
+          }, function (e) {
+            dead = true; live[n] = null;
+            if (adapter.final(e)) liveOver[n] = true;
+            if (window.console) console.warn('records: live updates to ' + n + ' stopped', e);
+          });
+          if (!dead) live[n] = typeof stop === 'function' ? stop : function () {};
+        } catch (e) { live[n] = null; }
       });
     }
+
     function flush() {
-      if (!db || sending) return;
-      if (!readOk) { read(); return; }   /* merge the database's copy before writing over it */
-      var ids = Object.keys(outbox), failure = null;
-      if (!ids.length) return;
+      if (!adapter || sending) return;
+      if (!readOk) { read(); return; }   /* merge the store's copy before writing over it */
+      var jobs = [];
+      NAMES.forEach(function (n) {
+        var ob = outbox[n], ids = null, size = 0, dropped = false;
+        Object.keys(ob).forEach(function (id) {
+          if (!cache[n][id] || !usable(id)) { delete ob[id]; dropped = true; return; }
+          var f = flying[n + '/' + id];
+          if (f && Date.now() - f.since < 4 * WAIT) return;   /* it goes again once that write settles */
+          var len = JSON.stringify(cache[n][id]).length;
+          if (ids && (ids.length >= adapter.batch || size + len > MAXBODY)) { jobs.push({ n: n, ids: ids }); ids = null; }
+          if (!ids) { ids = []; size = 0; }
+          ids.push(id); size += len;
+        });
+        if (ids) jobs.push({ n: n, ids: ids });
+        if (dropped) keep(OUT[n], ob);
+      });
+      if (!jobs.length) return;
       sending = true;
+      var failure = null;
       (function next(i) {
-        if (i < ids.length) {
-          send(ids[i]).then(function () { next(i + 1); }, function (e) { failure = e; next(i + 1); });
+        if (i >= jobs.length) {
+          sending = false;
+          if (failure) failed('sending records', failure);
+          else flush();   /* anything written while this pass was on its way */
+          tell();
           return;
         }
-        sending = false;
-        if (failure) failed('sending answers', failure);
-        else flush();   /* anything written while this pass was on its way */
-        tell();
+        var n = jobs[i].n, recs = map(), keys, raw, waited = false;
+        jobs[i].ids.forEach(function (id) { if (cache[n][id]) recs[id] = cache[n][id]; });
+        keys = Object.keys(recs).map(function (id) { return n + '/' + id; });
+        if (!keys.length) { next(i + 1); return; }
+        try { raw = Promise.resolve(adapter.write(n, recs)); } catch (e) { raw = Promise.reject(e); }
+        var mark = { since: Date.now() };
+        keys.forEach(function (k) { flying[k] = mark; });
+        function landed() {
+          keys.forEach(function (k) { if (flying[k] === mark) delete flying[k]; });
+          if (waited) kick();   /* it settled after its wait ran out: send what is still queued */
+        }
+        raw.then(landed, landed);
+        call(function () { return raw; }).then(function (reply) {
+          var ob = outbox[n], done = false, id;
+          /* a record leaves the queue only if it did not change while it was on its way */
+          for (id in recs) if (id in ob && same(cache[n][id], recs[id])) { delete ob[id]; done = true; }
+          if (done) keep(OUT[n], ob);
+          if (reply) absorb(n, reply, 'reply');
+          next(i + 1);
+        }, function (e) { if (e && e.code === 'timeout') waited = true; failure = e; next(i + 1); });
       })(0);
     }
-    function kick() { if (db) { subscribe(); flush(); } }
-    function trigger() { retryUsed = false; kick(); }
+    function kick() {
+      if (!adapter) return;
+      subscribe();
+      if (!readOk || stale) read(); else flush();
+    }
+    /* load, online, visible: try again now, and with no live updates read the store again first */
+    function trigger() { retryUsed = false; if (adapter && !adapter.watch) stale = true; kick(); }
 
-    function put(r) {
-      cache[r.q] = r;
-      save();
-      if (tier !== 'local') { outbox[r.q] = r.at; keep(outKey, outbox); trigger(); }
+    function put(n, id, r) {
+      if (!usable(id)) throw new Error('unusable record id "' + id + '"');
+      cache[n][id] = r;
+      save(n);
+      if (tier !== 'local') { outbox[n][id] = r.at || null; keep(OUT[n], outbox[n]); retryUsed = false; kick(); }
       tell();
     }
 
     function start(status, remote) {
       onStatus = status; onRemote = remote;
       window.addEventListener('storage', function (e) {
-        if (e.key !== key) return;
-        var changed = fromDisk();
-        if (changed.length) onRemote(changed);
+        NAMES.forEach(function (n) {
+          if (e.key !== KEY[n]) return;
+          var changed = fromDisk(n);
+          if (changed.length) onRemote(n, changed);
+        });
       });
+      if (served || host) {
+        window.addEventListener('online', trigger);
+        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') trigger(); });
+      }
       if (host) {
         var p;
         try { p = Promise.resolve(window.claude.use('db')); } catch (e) { p = Promise.resolve(null); }
-        p.then(null, function () { return null; }).then(function (d) {
-          db = d || null;
+        p.then(null, function () { return null; }).then(function (db) {
+          adapter = db ? hostedStore(db) : null;
           tier = db ? 'hosted' : 'local';
           trigger();   /* read, subscribe, then send what waits */
           tell();
         });
-        window.addEventListener('online', trigger);
-        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') trigger(); });
       }
+      trigger();
       tell();
     }
 
     return {
-      get: function (id) { return cache[id] || null; },
-      put: put,
-      waiting: function (id) { return tier !== 'local' && id in outbox; },
+      get: function (id) { return cache.answers[id] || null; },
+      put: function (r) { put('answers', r.q, r); },
+      state: function (key) { return cache.state[key] || null; },
+      putState: function (key, r) { put('state', key, r); },
+      waiting: function (id) { return tier !== 'local' && id in outbox.answers; },
       status: function () {
-        return { tier: tier, readOk: readOk, readFailed: readFailed, sending: sending, pending: Object.keys(outbox).length };
+        return { tier: tier, readOk: readOk, readFailed: readFailed, sending: sending,
+                 pending: Object.keys(outbox.answers).length, pendingState: Object.keys(outbox.state).length };
       },
       start: start
     };
@@ -874,7 +1035,7 @@
       q._section = q.closest('section');
       if (!q._section) throw new Error('not inside a section');
       /* the id is the store key and a database path segment */
-      if (!id || !/^[A-Za-z0-9_.~:@+-]+$/.test(id)) throw new Error('missing or unusable data-q');
+      if (!usable(id)) throw new Error('missing or unusable data-q');
       if (byId[id]) throw new Error('data-q repeats another item');
       if (!KINDS.hasOwnProperty(kind)) throw new Error('unknown data-kind "' + kind + '"');
       KINDS[kind](q);
@@ -942,7 +1103,8 @@
     if (s.tier === 'connecting') return 'answers: checking sync';
     if (s.pending) return s.pending + (s.pending === 1 ? ' answer' : ' answers') + ' not sent yet, saved on this device';
     if (!s.readOk) return s.readFailed ? 'answers: saved on this device, will sync when the connection is back' : 'answers: checking sync';
-    return 'answers: synced across devices';
+    if (s.pendingState) return 'progress not sent yet, saved on this device';
+    return s.tier === 'served' ? 'answers: saved to your learning folder' : 'answers: synced across devices';
   }
   function currentLesson() {
     var s = document.getElementById(currentId());
@@ -958,11 +1120,12 @@
     say(syncLine, syncText(settled));
     var cur = currentLesson();
     exportBoxes.forEach(function (box) {
-      box.hidden = !(settled.tier === 'local' || (settled.tier === 'hosted' && settled.pending && box._section === cur));
+      box.hidden = !(settled.tier === 'local' || (settled.tier !== 'connecting' && settled.pending && box._section === cur));
     });
     questions.forEach(function (q) { if (q._status) q._status(); });
   }
-  function rehydrate(ids) {
+  function rehydrate(name, ids) {
+    if (name !== 'answers') return;
     var touched = [];
     ids.forEach(function (id) {
       var q = byId[id];
@@ -973,7 +1136,7 @@
     touched.forEach(updateScore);
   }
 
-  /* ---------- hydrate from this device at once, then from the database when it answers ---------- */
+  /* ---------- hydrate from this device at once, then from the store when it answers ---------- */
   questions.forEach(hydrate);
   sections.forEach(updateScore);
   store.start(showSync, rehydrate);

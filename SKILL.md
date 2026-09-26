@@ -77,7 +77,9 @@ Default: the page opens from disk (`open`, `xdg-open`, or the browser; if you ca
 
 If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone instead. Read `references/hosted.md` before the first publish. Pick the tier on the first publish, record it in the vault note's `page:` line, keep it for the topic.
 
-The page stays one file: inline style and script, no external assets or requests (system fonts). Keep the template's structure; the comment at its top lists what you edit and what the script derives. An item showing "This item is broken" has bad markup (unknown `data-kind`, a missing part, a bad or repeated `data-q`); fix it.
+The page stays one file: inline style and script, system fonts, no external assets, and no requests except to its own origin's `api/`. Keep the template's structure; the comment at its top lists what you edit and what the script derives. An item showing "This item is broken" has bad markup (unknown `data-kind`, a missing part, a bad or repeated `data-q`); fix it.
+
+**Records.** The page keeps two collections of keyed records: `answers`, keyed by question id (the shape in Grading), and `state`, keyed by name (`finish:<lesson>`, `resume`, `session:<date>:<device>`, where `<device>` is a short random id per browser), each record with its own `at`. Every `at` is UTC as JavaScript's `toISOString()` writes it (`2026-09-25T14:03:00.000Z`); any other form counts as oldest. Every copy merges them the same way: the newer `at` wins the fields, answer histories are joined by `at`, and nothing is deleted. When you combine two copies (a pasted block and a database), merge record by record; never replace a whole collection.
 
 ## Vault note
 

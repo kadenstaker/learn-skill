@@ -1,6 +1,6 @@
 # Hosted tier
 
-Use this when the host can publish an HTML file to a URL and give the page a small shared database. The page detects the database itself: the template's store hook calls `window.claude.use('db')` and falls back to localStorage when that is missing, so the same file works on both tiers. On the hosted tier you read answers from the database, and the page's `onSnapshot` subscription keeps two open devices in step. Copy answers appears on the current lesson while answers wait to send, and the sidebar says how many; a pasted block may be newer than the database, so merge by `at` (the newer record wins, histories are joined, and `value` and `correct` follow the latest attempt).
+Use this when the host can publish an HTML file to a URL and give the page a small shared database. The page picks its store itself: the template's store hook calls `window.claude.use('db')` and falls back to localStorage when that is missing, so the same file works on both tiers. The database holds two collections, one document per record: `answers` and `state` (see Records in SKILL.md). On the hosted tier you read answers from the database, and the page's `onSnapshot` subscriptions keep two open devices in step. Copy answers appears on the current lesson while answers wait to send, and the sidebar says how many; a pasted block may be newer than the database, so merge by `at` (the newer record wins, histories are joined, and `value` and `correct` follow the latest attempt).
 
 ## Claude Code
 
@@ -15,4 +15,4 @@ Tool names change; if the ones above are missing, look for the host's current ar
 
 ## Other hosts
 
-Same shape: publish the file, give the page a database the script can reach, read the `answers` collection when grading. Add the host's database call next to the `window.claude` line in the template's store hook.
+Same shape: publish the file, give the page a database the script can reach with collections `answers` and `state`, read `answers` when grading. Add the host's database as an adapter next to `hostedStore` in the template's store, and its detection next to the `window.claude` line.

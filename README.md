@@ -53,5 +53,5 @@ The page works two ways, and detects which on its own.
 - `SKILL.md` - the skill
 - `template.html` - the topic page template: a probe, a sample concept lesson, a sample drill, the cheat sheet, and the how-it-works page. The script draws the sidebar, progress bar, and lesson strips from each section's attributes
 - `references/hosted.md` - how to publish the page with a synced answer database when the agent has such a tool
-- `scripts/serve.py` - the goal server: serves each goal page and keeps its `answers.json` and `state.json`; `lan on` adds the phone on the same Wi-Fi
+- `scripts/serve.py` - the goal server: serves each goal page and keeps its `answers.json` and `state.json`; `lan on` adds the phone on the same Wi-Fi, `tailscale on` the phone anywhere through Tailscale Serve
 - `scripts/schedule.py` - installs the login job that keeps the goal server running

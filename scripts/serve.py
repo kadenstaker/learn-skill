@@ -12,6 +12,7 @@ usage:
   serve.py unlock GOAL                    drop GOAL's run lock
   serve.py new-token --root DIR           replace the token (every bookmark then needs the new link)
   serve.py lan on|off --root DIR          also listen on the local network, for a phone on the same Wi-Fi, or stop
+  serve.py tailscale on|off --root DIR    serve the goals to the learner's other devices through Tailscale Serve (HTTPS), or stop
 
 GOAL is a goal folder; FILE is {"schema": 1, "records": {id: record}}, or "-" for stdin. A block is
 {"goal", "lesson", "answers": [record], "state": {key: record}}; "state" comes only from Finish lesson.
@@ -20,7 +21,10 @@ Each command prints one JSON line to stdout; diagnostics go to stderr.
 Pages are at http://127.0.0.1:<port>/<token>/<goal-slug>/, with api/answers, api/state and api/version
 beside them, and /<token>/api/whoami. Port, token and lan mode live in <root>/serve.json (0600) and are kept
 across restarts. In lan mode the server listens on every IPv4 interface, also accepts the machine's .local name
-and LAN address as Host, and each goal gains api/phone (the phone links) and api/qr.svg (the first one as a QR). Every request needs the token and a Host on the allowlist; nothing else under the root is served.
+and LAN address as Host, and each goal gains api/phone (the phone links) and api/qr.svg (the first one as a QR).
+With tailscale on, `tailscale serve` proxies https://<machine>.<tailnet>.ts.net/ to the server on 127.0.0.1, the
+server accepts that name as Host too, and api/phone and api/qr.svg lead with the https link.
+Every request needs the token and a Host on the allowlist; nothing else under the root is served.
 A running server keeps its pid in <root>/serve.pid; one started by `ensure` logs to <root>/serve.log (0600),
 which never holds the token.
 
@@ -31,7 +35,7 @@ The server keeps no copy in memory, so `merge` writes the files directly, runnin
 
 Python 3.7+ standard library only.
 """
-import argparse, errno, hmac, http.client, json, math, os, re, secrets, signal, socket, stat, subprocess, sys, tempfile, threading, time
+import argparse, errno, hmac, http.client, json, math, os, re, secrets, shutil, signal, socket, stat, subprocess, sys, tempfile, threading, time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -523,10 +527,65 @@ def local_name():
     return name + ".local" if re.fullmatch(r"[A-Za-z0-9-]{1,63}", name) else None
 
 
-def phone_links(port, token):
-    """(link, other link) a phone on the same Wi-Fi opens: the .local name first, since it survives a new IP."""
-    links = ["http://%s:%d/%s/" % (h, port, token) for h in (local_name(), lan_ip()) if h]
-    return (links + [None, None])[:2]
+def phone_links(port, token, lan=True, ts=None):
+    """(link, other link, via) a phone opens: the Tailscale https link first, since it works anywhere;
+    then on the same Wi-Fi the .local name, since it survives a new IP, then the LAN address."""
+    links = ["https://%s/%s/" % (ts, token)] if ts else []
+    if lan:
+        links += ["http://%s:%d/%s/" % (h, port, token) for h in (local_name(), lan_ip()) if h]
+    return tuple((links + [None, None])[:2]) + ("tailscale" if ts else "wifi" if links else None,)
+
+
+# ---------------------------------------------------------------- anywhere, laptop awake (Tailscale Serve)
+TAILSCALE_APP = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"   # the Mac App Store install puts nothing on PATH
+HTTPS_STEPS = ("in the Tailscale admin console, open DNS, turn on MagicDNS, then Enable HTTPS under HTTPS Certificates. "
+               "The machine's name then goes into public certificate logs, so rename a machine named after a person first")
+
+
+def tailscale_bin():
+    found = shutil.which("tailscale")
+    return found or (TAILSCALE_APP if os.access(TAILSCALE_APP, os.X_OK) else None)
+
+
+def tailscale(args, timeout=30):
+    """(exit code, stdout, stderr) of the tailscale CLI, never waiting on a prompt; code None when it cannot run."""
+    exe = tailscale_bin()
+    if not exe:
+        return None, "", "Tailscale is not installed"
+    try:
+        p = subprocess.run([exe] + args, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, "", "`tailscale %s` did not finish in %d s" % (" ".join(args), timeout)
+    except OSError as e:
+        return None, "", str(e)
+    return p.returncode, p.stdout, p.stderr
+
+
+def tailscale_name():
+    """(this machine's ts.net name, None) when Tailscale runs with MagicDNS and HTTPS on, else (None, why)."""
+    code, out, err = tailscale(["status", "--json", "--peers=false"], timeout=10)
+    if code is None:
+        return None, err
+    try:
+        st = json.loads(out)
+    except ValueError:
+        return None, "`tailscale status` failed: %s" % (err.strip() or out.strip())[:200]
+    if st.get("BackendState") != "Running":
+        return None, "Tailscale is not connected (%s): open the Tailscale app and sign in" % st.get("BackendState")
+    name = ((st.get("Self") or {}).get("DNSName") or "").rstrip(".").lower()
+    if not name:
+        return None, "this machine has no Tailscale DNS name: " + HTTPS_STEPS
+    if name not in [d.rstrip(".").lower() for d in (st.get("CertDomains") or [])]:
+        return None, "HTTPS certificates are off for this tailnet: " + HTTPS_STEPS
+    return name, None
+
+
+def tailscale_map(port):
+    """Point Tailscale Serve's https://<name>/ at the server's port. None, or why it failed."""
+    code, out, err = tailscale(["serve", "--bg", "--yes", "http://127.0.0.1:%d" % port])
+    if code != 0:
+        return "`tailscale serve` failed: %s" % ((err.strip() or out.strip())[:300] or "exit %s" % code)
+    return None
 
 
 # ---------------------------------------------------------------- config
@@ -546,6 +605,7 @@ def load_config(root, create=True):
         cfg["token"] = secrets.token_hex(16)
         save_config(root, cfg)
     cfg.setdefault("lan", False)
+    cfg.setdefault("tailscale", None)
     return cfg
 
 
@@ -558,20 +618,37 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64   # the default 5 resets a burst of connections, such as a page reload's reads
 
-    def __init__(self, root, port, token, lan=False):
-        self.root, self.token, self.lan = root, token, lan
+    def __init__(self, root, port, token, lan=False, ts=None):
+        self.root, self.token, self.lan, self.ts = root, token, lan, ts
         super().__init__(("0.0.0.0" if lan else "127.0.0.1", port), Handler)
         self.port = self.server_address[1]
         self.hosts = {"127.0.0.1:%d" % self.port}
         self.name = local_name() if lan else None   # read once: a rename needs a restart
+        self.ts_hosts = {ts, ts + ":443"} if ts else set()   # Tailscale Serve is https on 443
+        self.ts_logged = False
 
     def allowed(self, host):
-        """127.0.0.1 always; under lan also the .local name and the current LAN address (it can change while running)."""
+        """127.0.0.1 always; with tailscale the ts.net name; under lan also the .local name and the current
+        LAN address (it can change while running)."""
         host = (host or "").lower()   # a phone sends the name as typed
-        if host in self.hosts or not self.lan:
-            return host in self.hosts
+        if host in self.hosts:
+            return True
+        if host in self.ts_hosts:
+            return True
+        if not self.lan:
+            return False
         ip = lan_ip()
         return host in {"%s:%d" % (h.lower(), self.port) for h in (self.name, ip) if h}
+
+    def note_tailscale(self, headers):
+        """Log once which Host a request through Tailscale Serve carries (unverified: its name or 127.0.0.1)."""
+        if self.ts_logged or not self.ts:
+            return
+        host = (headers.get("Host") or "").lower()
+        if host in self.ts_hosts or any(k.lower().startswith("tailscale-") for k in headers.keys()):
+            self.ts_logged = True
+            sys.stderr.write("%s tailscale: a request through Tailscale Serve came with Host %s\n"
+                             % (time.strftime("%H:%M:%S"), "the ts.net name" if host in self.ts_hosts else host or "(none)"))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -610,6 +687,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.server.allowed(self.headers.get("Host")):
             self.refuse(403, "unknown host")
             return None
+        self.server.note_tailscale(self.headers)
         path = self.path.split("?", 1)[0]
         parts = path.split("/")
         # "", token, then slug and tail; no empty, dot or percent-encoded segments anywhere
@@ -621,7 +699,7 @@ class Handler(BaseHTTPRequestHandler):
             return None, "whoami"
         slug = rest[0]
         tail = "/".join(rest[1:])
-        pages = ("", "index.html", "api/answers", "api/state", "api/version") + (("api/phone", "api/qr.svg") if self.server.lan else ())
+        pages = ("", "index.html", "api/answers", "api/state", "api/version") + (("api/phone", "api/qr.svg") if self.server.lan or self.server.ts else ())
         if not SLUG_RE.fullmatch(slug) or slug in RESERVED or tail not in pages:
             self.refuse(404, "not found")
             return None
@@ -643,13 +721,14 @@ class Handler(BaseHTTPRequestHandler):
         goal, what = r
         try:
             if what == "whoami":
-                return self.reply(200, {"root": self.server.root, "lan": self.server.lan})
+                return self.reply(200, {"root": self.server.root, "lan": self.server.lan, "tailscale": self.server.ts})
             index = os.path.join(goal, "index.html")
             if what in ("api/phone", "api/qr.svg"):
                 slug = os.path.basename(goal)
-                links = [u + slug + "/" if u else None for u in phone_links(self.server.port, self.server.token)]
+                first, other, via = phone_links(self.server.port, self.server.token, self.server.lan, self.server.ts)
+                links = [u + slug + "/" if u else None for u in (first, other)]
                 if what == "api/phone":
-                    return self.reply(200, {"url": links[0], "other": links[1]})
+                    return self.reply(200, {"url": links[0], "other": links[1], "via": via})
                 if not links[0]:
                     return self.refuse(404, "not on a network")
                 return self.reply(200, qr_svg(links[0]).encode("utf-8"), "image/svg+xml")
@@ -722,7 +801,7 @@ def cmd_run(args):
     except (OSError, AttributeError):
         pass
     try:
-        httpd = Server(root, port, cfg["token"], cfg["lan"] is True)
+        httpd = Server(root, port, cfg["token"], cfg["lan"] is True, cfg["tailscale"] or None)
     except OSError as e:
         if e.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", -1)):
             if whoami(port, cfg["token"]) == root:
@@ -791,9 +870,14 @@ def whoami(port, token, timeout=2.0):
     return (ask_whoami(port, token, timeout) or {}).get("root")
 
 
-def whoami_lan(port, token):
-    """Whether the server on port listens on the LAN, or None when none answers."""
-    return (ask_whoami(port, token) or {}).get("lan")
+def whoami_mode(port, token):
+    """(lan, tailscale name) of the server on port, or None when none answers."""
+    doc = ask_whoami(port, token)
+    return None if doc is None else (doc.get("lan"), doc.get("tailscale"))
+
+
+def mode(cfg):
+    return (cfg["lan"] is True, cfg["tailscale"] or None)
 
 
 def ask_whoami(port, token, timeout=2.0):
@@ -881,12 +965,12 @@ def cmd_ensure(args):
         def running(port, started, note=None):
             out = {"ok": True, "started": started, "pid": read_pid(root), "port": port,
                    "url": "http://127.0.0.1:%d/%s/" % (port, token)}
-            lan = cfg["lan"] is True
-            if lan:
-                out["phone"], out["phone_other"] = phone_links(port, token)
-            if whoami_lan(port, token) not in (None, lan):
-                note = ((note + "; ") if note else "") + ("the running server is not in the mode serve.json names (lan %s): "
-                                                          "run `serve.py stop`, then ensure again" % ("on" if lan else "off"))
+            lan, ts = mode(cfg)
+            if lan or ts:
+                out["phone"], out["phone_other"], out["phone_via"] = phone_links(port, token, lan, ts)
+            if whoami_mode(port, token) not in (None, (lan, ts)):
+                note = ((note + "; ") if note else "") + ("the running server is not in the mode serve.json names (lan %s, tailscale %s): "
+                                                          "run `serve.py stop`, then ensure again" % ("on" if lan else "off", "on" if ts else "off"))
             if note:
                 out["note"] = note
             return say(out)
@@ -920,7 +1004,10 @@ def cmd_ensure(args):
                 return running(port, False)
             port = free_port(port, cfg["lan"] is True)
             note = ("port %d is taken by another program, so the server moved to a new port: "
-                    "bookmarks and any `tailscale serve` mapping need redoing" % saved)
+                    "phone bookmarks on the Wi-Fi link need redoing" % saved)
+            if cfg["tailscale"]:
+                why = tailscale_map(port)   # the https link stays the same once Serve points at the new port
+                note += "; " + ("`tailscale serve` now points at it" if not why else why + " (run `serve.py tailscale on` again)")
         return say({"ok": False, "error": "no free port found"}, 2)
 
 
@@ -1045,15 +1132,45 @@ def cmd_new_token(args):
                 "url": "http://127.0.0.1:%d/%s/" % (port, cfg["token"]) if port else None})
 
 
+def restart_note(out, cfg):
+    if whoami_mode(cfg.get("port"), cfg["token"]) not in (None, mode(cfg)):
+        out["note"] = "run `serve.py stop` and then `serve.py ensure` to serve in the new mode"
+    return say(out)
+
+
 def cmd_lan(args):
     root = real_root(args.root)
     cfg = load_config(root)
     cfg["lan"] = args.mode == "on"
     save_config(root, cfg)
-    out = {"ok": True, "lan": cfg["lan"]}
-    if whoami_lan(cfg.get("port"), cfg["token"]) not in (None, cfg["lan"]):
-        out["note"] = "run `serve.py stop` and then `serve.py ensure` to serve in the new mode"
-    return say(out)
+    return restart_note({"ok": True, "lan": cfg["lan"]}, cfg)
+
+
+def cmd_tailscale(args):
+    root = real_root(args.root)
+    cfg = load_config(root)
+    if args.mode == "off":
+        why = None
+        if cfg["tailscale"]:
+            code, out, err = tailscale(["serve", "--https=443", "off"])
+            why = None if code == 0 else "`tailscale serve --https=443 off` failed: %s" % ((err.strip() or out.strip())[:300] or "exit %s" % code)
+        cfg["tailscale"] = None
+        save_config(root, cfg)
+        out = {"ok": True, "tailscale": None}
+        if why:
+            out["warning"] = why + "; Serve may still forward to this port until `tailscale serve reset`"
+        return restart_note(out, cfg)
+    if not cfg.get("port"):
+        return say({"ok": False, "error": "no port yet: run `serve.py ensure` first"}, 2)
+    name, why = tailscale_name()
+    if not name:
+        return say({"ok": False, "error": why}, 2)
+    why = tailscale_map(cfg["port"])
+    if why:
+        return say({"ok": False, "error": why}, 2)
+    cfg["tailscale"] = name
+    save_config(root, cfg)
+    return restart_note({"ok": True, "tailscale": name}, cfg)
 
 
 def main(argv=None):
@@ -1085,6 +1202,10 @@ def main(argv=None):
     p.add_argument("mode", choices=("on", "off"))
     p.add_argument("--root", required=True)
     p.set_defaults(fn=cmd_lan)
+    p = sub.add_parser("tailscale")
+    p.add_argument("mode", choices=("on", "off"))
+    p.add_argument("--root", required=True)
+    p.set_defaults(fn=cmd_tailscale)
     p = sub.add_parser("new-token")
     p.add_argument("--root", required=True)
     p.set_defaults(fn=cmd_new_token)

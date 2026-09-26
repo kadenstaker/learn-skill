@@ -55,7 +55,8 @@ Every run starts by reading the profile. It is `profile.json` in the learning ro
   "tz": "America/Denver",        the machine's time zone (IANA name)
   "reminders": "none",           none for now: reminders come in a later version
   "reminder_time": null,
-  "phone": "none",               none; wifi (a phone on the same home Wi-Fi); hosted (a goal on a Claude hosted page)
+  "phone": "none",               none; wifi (a phone on the same home Wi-Fi); tailscale (a phone anywhere, laptop awake);
+                                 hosted (a goal on a Claude hosted page, laptop can be off)
   "prepare_ahead": null          null for now: the prepare-ahead run comes in a later version
 }
 ```
@@ -177,7 +178,21 @@ Each goal has one tier. The page's `#app[data-served]` marks a served goal; a UR
   3. Set the profile's `phone` to `wifi`, then run `ensure` and open the goal's link on the laptop. The page's sidebar shows a QR code and the phone link. Tell the learner, in one line, to scan it with the phone on the same Wi-Fi and bookmark the page; `ensure` also prints the phone link (`phone`, and `phone_other` in case the name does not open), for the terminal only, since it holds the token. If the macOS firewall asks whether Python may accept incoming connections, the answer is Allow.
 
   The phone saves to the same `answers.json` and `state.json`, so grading is unchanged. To turn it off: `serve.py lan off`, `schedule.py remove --server`, then `serve.py stop` and `ensure`, and set `phone` back to `none`.
-- **Hosted.** If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone with the laptop off. Read `references/hosted.md` before the first publish, and put the URL in `page:`. Offer it only when the learner asks to use the phone with the laptop off or away from home.
+- **Tailscale,** a served goal on a phone anywhere, over HTTPS, while the laptop is awake and online. Tailscale Serve passes the phone's requests to the goal server; nothing is open to the internet, only to the learner's own devices. Setup, once for the learning root:
+  1. The learner installs Tailscale on the laptop and the phone and signs in to the same account on both. That step is theirs; wait for it.
+  2. HTTPS certificates must be on for their tailnet. Before they turn them on, say in one line that the laptop's name in Tailscale goes into public certificate logs, and if that name is a person's (like "Sams-MacBook-Air"), offer to rename it first (Tailscale admin console, Machines, the machine's menu, Edit machine name). Then they turn on MagicDNS and HTTPS (admin console, DNS, Enable HTTPS).
+  3. `serve.py ensure --root <learning root>`, then `serve.py tailscale on --root <learning root>`. It checks that Tailscale is signed in with HTTPS on, points `tailscale serve` at the server's port (this lasts across restarts), and saves the laptop's `.ts.net` name as an allowed Host. On `ok: false`, give its error in one line; it names the missing step.
+  4. The login job, as in Same Wi-Fi step 2.
+  5. Set the profile's `phone` to `tailscale`, run `ensure`, open the goal's link on the laptop: the sidebar shows the QR code and the `https://<laptop>.<tailnet>.ts.net/...` link (`phone` in `ensure`'s output, for the terminal only). Tell the learner, in one line, to scan it with Tailscale on and bookmark the page.
+
+  If the phone link stops opening: the laptop is asleep or offline, or Tailscale is off on the phone (iOS runs one VPN at a time, so another VPN app turns it off). If the server ever moves to a new port, `ensure` points Serve at it and the link stays the same. To turn it off: `serve.py tailscale off`, then `serve.py stop` and `ensure`; remove the login job unless Same Wi-Fi still uses it; set `phone` to `none`.
+- **Hosted.** If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone with the laptop off. Read `references/hosted.md` before the first publish, and put the URL in `page:`. Offer it only when the learner asks to use the phone with the laptop off, or away from home without Tailscale. Before offering it, say in one line that the page's shared database may need a paid Claude plan. Set the profile's `phone` to `hosted`.
+
+**The phone.** When the learner asks to use a phone, pick the path from where they will use it, and say what it needs in one line. Same Wi-Fi and Tailscale serve from the laptop, so they stop while it sleeps or is shut; Hosted is the path with the laptop off.
+
+- At home only, `python` set: **Same Wi-Fi.** No account.
+- Away from home too, laptop left awake, `python` set: **Tailscale.** A free Tailscale account and its app on both devices.
+- Laptop off, or no `python`: **Hosted**, if the host can publish one.
 
 A tier is picked when the goal starts and kept, with one change: a local goal whose learner now has `python` becomes served the next time you write to its page (add `data-served`, run `ensure`, open the served link). A run that writes nothing leaves it local. The old copy keeps its answers in that browser: when opened from disk it now says it is not connected and offers Copy answers, so the terminal line says to paste from there anything typed since the learner last pressed Finish lesson or Copy answers.
 

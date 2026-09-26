@@ -82,7 +82,7 @@
     a "This item is broken" note on any .q it cannot run (unknown data-kind, a missing part, a bad or repeated data-q,
       or no goal id on the page),
     on a served goal opened from a file (#app[data-served] on a file:// page), a sync line saying this copy is not connected,
-    on the laptop, when the goal's server also listens on the Wi-Fi (serve.py lan on), the phone link and its QR in the sidebar.
+    on the laptop, when the goal's server has a phone path (serve.py lan on or tailscale on), the phone link and its QR in the sidebar.
 -->
 <style>
   :root {
@@ -827,11 +827,11 @@
             .then(function (res) { return res.ok ? res.json() : null; })
             .then(function (v) { return v && typeof v.version === 'string' ? v.version : null; }, function () { return null; });
         },
-        /* the goal's phone links when the server also listens on the Wi-Fi (serve.py lan on), else null */
+        /* the goal's phone links when the server has a phone path (serve.py lan on or tailscale on), else null */
         phone: function () {
           return fetch(API + 'phone', { cache: 'no-store', credentials: 'same-origin' })
             .then(function (res) { return res.ok ? res.json() : null; })
-            .then(function (p) { return p && typeof p.url === 'string' ? { url: p.url, other: typeof p.other === 'string' ? p.other : null, qr: API + 'qr.svg' } : null; },
+            .then(function (p) { return p && typeof p.url === 'string' ? { url: p.url, other: typeof p.other === 'string' ? p.other : null, via: p.via === 'tailscale' ? 'tailscale' : 'wifi', qr: API + 'qr.svg' } : null; },
                   function () { return null; });
         },
         /* a refused request (a wrong token, a body too large) or a record format this page does not know */
@@ -2199,14 +2199,15 @@
   checkVersion();
   setInterval(checkVersion, 30000);
 
-  /* ---------- served on the Wi-Fi: the phone link as a QR, on the laptop only ---------- */
+  /* ---------- a phone path (Wi-Fi or Tailscale): the phone link as a QR, on the laptop only ---------- */
   if (store.status().tier === 'served' && location.hostname === '127.0.0.1') {
     store.phone().then(function (p) {
       if (!p) return;
       var box = document.createElement('div');
       box.className = 'phone';
       box.innerHTML = '<span class="eyebrow">On your phone</span><img width="132" height="132" alt="QR code of the phone link">' +
-        '<p>Same home Wi-Fi: scan this, or open <a></a>. Bookmark it, and keep to that one link on the phone.</p><p class="other"></p>';
+        '<p><span class="how"></span>: scan this, or open <a></a>. Bookmark it, and keep to that one link on the phone.</p><p class="other"></p>';
+      box.querySelector('.how').textContent = p.via === 'tailscale' ? 'With Tailscale on, anywhere the laptop is awake' : 'Same home Wi-Fi';
       box.querySelector('img').src = p.qr;
       var a = box.querySelector('a');
       a.href = a.textContent = p.url;

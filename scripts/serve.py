@@ -2,6 +2,8 @@
 """The learn skill's goal server: serves each goal page and keeps its answers.json and state.json.
 
 usage:
+  serve.py ensure --root DIR              make sure DIR's server is running; start it detached if not
+  serve.py stop --root DIR                stop DIR's server
   serve.py run --root DIR [--port N]      serve every goal under DIR on 127.0.0.1, in the foreground
   serve.py merge GOAL answers|state FILE  merge FILE's records into GOAL/answers.json or state.json
   serve.py lock GOAL [--owner NAME]       take GOAL's run lock; exit 3 if a fresh one is held
@@ -14,6 +16,8 @@ Each command prints one JSON line to stdout; diagnostics go to stderr.
 Pages are at http://127.0.0.1:<port>/<token>/<goal-slug>/, with api/answers, api/state and api/version
 beside them, and /<token>/api/whoami. Port and token live in <root>/serve.json (0600) and are kept across
 restarts. Every request needs the token and a Host on the allowlist; nothing else under the root is served.
+A running server keeps its pid in <root>/serve.pid; one started by `ensure` logs to <root>/serve.log (0600),
+which never holds the token.
 
 Records merge the same way here as in the page (RECORDS in template.html): the newer `at` wins, answers
 join their histories, nothing is deleted. Every read-merge-write holds the goal's write lock and rereads
@@ -22,7 +26,7 @@ The server keeps no copy in memory, so `merge` writes the files directly, runnin
 
 Python 3.7+ standard library only.
 """
-import argparse, errno, hmac, json, math, os, re, secrets, socket, sys, tempfile, threading, time
+import argparse, errno, hmac, http.client, json, math, os, re, secrets, signal, socket, subprocess, sys, tempfile, threading, time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +36,10 @@ COLLECTIONS = ("answers", "state")
 MAX_BODY = 1 << 20              # the page sends at most about 250,000 characters per POST
 RUN_LOCK_STALE = 2 * 3600       # seconds; a run lock older than this was left by a run that died
 CONFIG = "serve.json"
+PID_FILE = "serve.pid"
+LOG_FILE = "serve.log"
+LOG_MAX = 1 << 20               # bytes; a larger serve.log moves to serve.log.1 when `ensure` next starts the server
+ENSURE_LOCK = ".ensure.lock"
 WRITE_LOCK = ".write.lock"
 RUN_LOCK = ".run.lock"
 SLUG_RE = re.compile(r"[a-z0-9-]+")
@@ -170,9 +178,9 @@ _thread_lock = threading.Lock()   # flock excludes other processes; this exclude
 
 
 @contextmanager
-def write_lock(goal):
+def file_lock(path):
     with _thread_lock:
-        fd = os.open(os.path.join(goal, WRITE_LOCK), os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             if os.name == "nt":
                 import msvcrt
@@ -196,6 +204,10 @@ def write_lock(goal):
                     fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+def write_lock(goal):
+    return file_lock(os.path.join(goal, WRITE_LOCK))
 
 
 def read_records(goal, coll):
@@ -426,14 +438,196 @@ def cmd_run(args):
     if cfg.get("port") != got:
         cfg["port"] = got
         save_config(root, cfg)
-    say({"ok": True, "port": got, "root": root, "url": "http://127.0.0.1:%d/%s/" % (got, cfg["token"])})
+    write_atomic(os.path.join(root, PID_FILE), ("%d\n" % os.getpid()).encode("ascii"))
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))   # so `finally` drops the pid file
     try:
+        say({"ok": True, "port": got, "root": root, "url": "http://127.0.0.1:%d/%s/" % (got, cfg["token"])})
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         httpd.server_close()
+        if read_pid(root) == os.getpid():
+            try:
+                os.unlink(os.path.join(root, PID_FILE))
+            except OSError:
+                pass
     return 0
+
+
+# ---------------------------------------------------------------- the detached server (ensure, stop)
+def read_pid(root):
+    try:
+        with open(os.path.join(root, PID_FILE), "r", encoding="ascii") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def is_ours(pid):
+    """True if pid is a live serve.py process. False for a dead pid, or one the system gave to another program."""
+    if not pid or pid <= 0:
+        return False
+    if os.name == "nt":
+        out = subprocess.run(["tasklist", "/FI", "PID eq %d" % pid, "/NH"], capture_output=True, text=True).stdout
+        return str(pid) in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False   # another user's process
+    try:
+        cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
+    except OSError:
+        return True    # no ps: trust the pid file
+    return "serve.py" in cmd
+
+
+def whoami(port, token, timeout=2.0):
+    """The learning root the server on port answers for, or None."""
+    if not port:
+        return None
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+        try:
+            c.request("GET", "/%s/api/whoami" % token, headers={"Host": "127.0.0.1:%d" % port})
+            r = c.getresponse()
+            body = r.read()
+        finally:
+            c.close()
+        return json.loads(body.decode("utf-8")).get("root") if r.status == 200 else None
+    except (OSError, ValueError, AttributeError, http.client.HTTPException):
+        return None
+
+
+def answers(root, port, token, wait=0.0):
+    """Whether the server on port answers for root, asking again for up to wait seconds."""
+    end = time.monotonic() + wait
+    while True:
+        if whoami(port, token) == root:
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.2)
+
+
+def free_port(after):
+    """The first port above after that 127.0.0.1 can bind, else 0 (the system picks)."""
+    for p in range(after + 1, min(after + 100, 65536)):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", p))
+            return p
+        except OSError:
+            continue
+        finally:
+            s.close()
+    return 0
+
+
+def spawn(root, port):
+    """Start `run` detached from this process and its session, on port (0: any).
+    Returns run's first stdout line as a dict, or None when it said nothing in time (see serve.log)."""
+    log = os.path.join(root, LOG_FILE)
+    try:
+        if os.path.getsize(log) > LOG_MAX:
+            os.replace(log, log + ".1")
+    except OSError:
+        pass
+    fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.chmod(log, 0o600)
+    cmd = [sys.executable, os.path.abspath(__file__), "run", "--root", root] + (["--port", str(port)] if port else [])
+    kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": fd, "cwd": root, "close_fds": True}
+    if os.name == "nt":
+        kw["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kw["start_new_session"] = True   # fork and setsid: no terminal, not in the agent's process group
+    try:
+        proc = subprocess.Popen(cmd, **kw)
+    finally:
+        os.close(fd)
+    box = []
+    t = threading.Thread(target=lambda: box.append(proc.stdout.readline()), daemon=True)
+    t.start()
+    t.join(15)
+    if not box:
+        return None
+    proc.stdout.close()   # run writes nothing more to stdout
+    try:
+        return json.loads(box[0])
+    except ValueError:
+        return None
+
+
+def cmd_ensure(args):
+    root = real_root(args.root)
+    with file_lock(os.path.join(root, ENSURE_LOCK)):   # two ensures at once start one server
+        cfg = load_config(root)
+        token, saved = cfg["token"], cfg.get("port")
+
+        def running(port, started, note=None):
+            out = {"ok": True, "started": started, "pid": read_pid(root), "port": port,
+                   "url": "http://127.0.0.1:%d/%s/" % (port, token)}
+            if note:
+                out["note"] = note
+            return say(out)
+
+        if answers(root, saved, token):
+            return running(saved, False)
+        pid = read_pid(root)
+        if is_ours(pid):
+            # a server of ours that does not answer yet: give it a moment, never move its port from under it
+            if answers(root, saved, token, wait=5):
+                return running(saved, False)
+            return say({"ok": False, "pid": pid, "error": "the server (pid %d) does not answer; "
+                        "run `serve.py stop --root %s`, then ensure again" % (pid, root)}, 2)
+        if pid is not None:
+            try:
+                os.unlink(os.path.join(root, PID_FILE))   # left by a server that died
+            except OSError:
+                pass
+        port, note = saved, None
+        for _ in range(3):
+            info = spawn(root, port)
+            if info is None:
+                return say({"ok": False, "error": "the server did not start; see %s" % os.path.join(root, LOG_FILE)}, 2)
+            if info.get("ok"):
+                port = info["port"]
+                if not answers(root, port, token, wait=5):
+                    return say({"ok": False, "error": "the server started but does not answer; see %s"
+                                % os.path.join(root, LOG_FILE)}, 2)
+                return running(port, True, note)
+            # the port is taken; by a server of ours that started meanwhile (a login job), or by another program
+            if answers(root, port, token, wait=1):
+                return running(port, False)
+            port = free_port(port)
+            note = ("port %d is taken by another program, so the server moved to a new port: "
+                    "bookmarks and any `tailscale serve` mapping need redoing" % saved)
+        return say({"ok": False, "error": "no free port found"}, 2)
+
+
+def cmd_stop(args):
+    root = real_root(args.root)
+    pid = read_pid(root)
+    if not is_ours(pid):
+        if pid is not None:
+            try:
+                os.unlink(os.path.join(root, PID_FILE))
+            except OSError:
+                pass
+        return say({"ok": True, "note": "no server was running"})
+    os.kill(pid, signal.SIGTERM)
+    end = time.monotonic() + 10
+    while is_ours(pid):
+        if time.monotonic() >= end:
+            return say({"ok": False, "pid": pid, "error": "the server did not stop"}, 2)
+        time.sleep(0.1)
+    try:
+        os.unlink(os.path.join(root, PID_FILE))   # Windows ends the process without running its cleanup
+    except OSError:
+        pass
+    return say({"ok": True, "stopped": pid})
 
 
 def goal_dir(path):
@@ -502,13 +696,19 @@ def cmd_new_token(args):
     cfg["token"] = secrets.token_hex(16)
     save_config(root, cfg)
     port = cfg.get("port")
-    return say({"ok": True, "note": "restart the server; old links stop working",
+    return say({"ok": True, "note": "run `serve.py stop` and then `serve.py ensure` to serve the new token; old links stop working",
                 "url": "http://127.0.0.1:%d/%s/" % (port, cfg["token"]) if port else None})
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd")
+    p = sub.add_parser("ensure")
+    p.add_argument("--root", required=True)
+    p.set_defaults(fn=cmd_ensure)
+    p = sub.add_parser("stop")
+    p.add_argument("--root", required=True)
+    p.set_defaults(fn=cmd_stop)
     p = sub.add_parser("run")
     p.add_argument("--root", required=True)
     p.add_argument("--port", type=int)

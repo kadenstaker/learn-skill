@@ -42,7 +42,7 @@ Come back any time with the topic name; it picks up at the active lesson.
 The page works two ways, and detects which on its own.
 
 - **Hosted.** If the agent can publish a page with a small database (Claude Code artifacts do this), the page gets a URL that opens on your laptop and your phone, answers sync between them, and the tutor reads them directly.
-- **Local.** Otherwise the page opens from disk. Answers stay in that browser. A **Copy answers** button appears after each lesson; press it and paste the block into the terminal with `done`.
+- **Local.** Otherwise the page opens from disk. Answers stay in that browser. Press **Finish lesson** at the end of each lesson: it copies a block to paste into the terminal with `done`.
 
 ## Files
 

@@ -14,7 +14,9 @@
     nav.side .group + a.item[href="#lNN"]   the plan: one .group per topic, then one link per lesson of that topic.
                                             Lesson numbers run across the whole goal, never restart per topic.
     main > section.lesson                   one per written lesson: data-type="probe|concept|drill",
-                                            data-status="active|passed", data-help="0..3", optional data-note="redo q2"
+                                            data-status="active|passed", data-help="0..3", optional data-note="redo q2",
+                                            data-graded="<at>" once graded: the at of the Finish marker you graded
+                                            (the current time if there was none). A Finish newer than it waits for you.
     .q[data-q="<lesson>-q<n>"][data-kind]   a question; kind = text | mc | num. Ids are unique across the goal page.
       mc:  .q[data-answer=key] > .opts > button.opt[data-key][data-why]
       num: .q[data-answer="35|35.0|7/2"][data-why][data-hint] > .row > input + button.check, then .fb
@@ -33,6 +35,14 @@
       attempt histories are joined, value and correct follow the latest attempt. Numeric drafts are saved.
     the sync line and the Copy answers button (every lesson on the local tier; on the served and hosted
       tiers, the current lesson while answers wait to send),
+    the Finish lesson button on each active lesson: it writes finish:<lesson>, and on the local tier also copies
+      the Finish block (the lesson's answers plus every state record) to paste with done. The strip then says
+      "finished, waiting for the tutor" until data-graded catches up,
+    the resume point and the session log (state records, written on each answer and on Finish); the page opens
+      at the resume point's lesson while it is still active, else at the first active lesson,
+    the return banner on that lesson after two or more days away ("Back after 8 days. 6 of 11 done here, next is q7."),
+    on the served tier, a check of api/version every 30 s and when the page becomes visible: a new index.html
+      reloads the page, or shows "New lesson ready" with a Reload button while an answer box has focus,
     a "This item is broken" note on any .q it cannot run (unknown data-kind, a missing part, a bad or repeated data-q,
       or no goal id on the page),
     on a served goal opened from a file (#app[data-served] on a file:// page), a sync line saying this copy is not connected.
@@ -196,6 +206,16 @@
   .broken { margin: 8px 0 12px; padding: 8px 12px; border: 2px dashed var(--bad); border-radius: 6px; font: 13px var(--mono); color: var(--ink); }
   .noscript { margin: 0; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--rule); color: var(--ink); }
   .export textarea { width: 100%; min-height: 72px; font: 12px var(--mono); }
+  .finish { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .finish[hidden] { display: none; }
+  .finish .note { font: 12px var(--mono); color: var(--muted); }
+  .finish textarea { width: 100%; min-height: 72px; font: 12px var(--mono); }
+  .strip .waiting { color: var(--accent); }
+  .banner { margin: 0 0 18px; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 6px 6px 0; font-size: .97rem; }
+  .banner[hidden] { display: none; }
+  .fresh { position: sticky; bottom: 0; z-index: 4; display: flex; gap: 12px; align-items: center; justify-content: space-between;
+           margin-top: 20px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; }
+  .fresh[hidden] { display: none; }
   .pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 26px; font-size: .95rem; }
   .pager a { color: var(--accent); text-decoration: none; }
   .pager a:hover { text-decoration: underline; }
@@ -278,7 +298,7 @@
         <div class="feedback" hidden></div>
       </div>
 
-      <p class="done">Answered both? Say <b>done</b> in the terminal.</p>
+      <p class="done">Answered both? Press <b>Finish lesson</b>.</p>
       <nav class="pager"></nav>
     </section>
 
@@ -322,7 +342,7 @@
         <div class="feedback" hidden></div>
       </div>
 
-      <p class="done">Answered all three? Say <b>done</b> in the terminal. Stuck? Say <b>stuck</b>.</p>
+      <p class="done">Answered all three? Press <b>Finish lesson</b>. Stuck? Say <b>stuck</b> in the terminal.</p>
       <nav class="pager"></nav>
     </section>
 
@@ -363,7 +383,7 @@
         <div class="feedback" hidden></div>
       </div>
 
-      <p class="done">All checked? Say <b>done</b> in the terminal. The tutor reads your attempts, not just the score.</p>
+      <p class="done">All checked? Press <b>Finish lesson</b>. The tutor reads your attempts, not just the score.</p>
       <nav class="pager"></nav>
     </section>
 
@@ -383,7 +403,8 @@
         <li><b>Picture first.</b> Read the picture before the words. The caption points at the one thing to look at.</li>
         <li><b>Two kinds of lesson.</b> A concept lesson ends with questions you answer in your own words. The tutor grades those. A drill checks itself as you go, and the tutor reads your attempts afterwards.</li>
         <li><b>Your answers save as you type.</b> When the page is served from your computer, or hosted by a tool that can store them, they are saved there and reach your other devices. Opened as a local file, they stay in this browser and a <b>Copy answers</b> button appears at the end of each lesson. The bottom of the sidebar says which. If some answers are not sent yet, it says how many, and Copy answers appears on the lesson.</li>
-        <li><b>When you finish a lesson, say <code>done</code> in the terminal.</b> On a local page, press <b>Copy answers</b> first and paste them with <code>done</code>. Feedback appears under each question, the next lesson unlocks, and the vault note gets the record.</li>
+        <li><b>When you finish a lesson, press Finish lesson.</b> The tutor grades finished lessons first thing on its next run: feedback appears under each question, the next lesson unlocks, and the vault note gets the record. Until then the lesson says it is waiting for the tutor. On a local page, Finish lesson also copies a block: paste it in the terminal with <code>done</code>. Saying <code>done</code> on its own works too.</li>
+        <li><b>The page remembers where you stopped,</b> on every device, and opens there. Back after a few days away, a line at the top says how far you got and which question is next.</li>
         <li><b>Other words the terminal understands:</b> <code>stuck</code> (more help now), <code>too easy</code> or <code>too hard</code> (change the help level), <code>just tell me</code> (get the answer), <code>next</code> (move on).</li>
         <li><b>Help level.</b> Each lesson shows one: 3 worked example, 2 outline, 1 bare, 0 you define the check. Two clean lessons in a row moves it down. Getting stuck moves it up.</li>
         <li><b>When you are wrong,</b> the tutor first works out why. A wrong mental model gets a picture of where your answer parts from reality and one question. A slip gets a finger pointed at the step. An edge case gets the failing input. You get the answer whenever you ask for it.</li>
@@ -443,6 +464,9 @@
   /* ---------- router: one section at a time ---------- */
   function titleOf(s) { var h = s.querySelector('h1'); return h ? h.textContent : s.id; }
   function defaultId() {
+    /* the resume point's lesson while it is still active, so a lesson the tutor has since passed never holds the page */
+    var r = store && store.state('resume'), at = r && typeof r.lesson === 'string' && document.getElementById(r.lesson);
+    if (at && at.classList.contains('lesson') && at.getAttribute('data-status') === 'active') return at.id;
     var active = document.querySelector('.lesson[data-status="active"]');
     return active ? active.id : sections[0].id;
   }
@@ -469,8 +493,6 @@
       (prev ? '<a href="#' + prev.id + '">&larr; ' + titleOf(prev) + '</a>' : '<span></span>') +
       (next ? '<a href="#' + next.id + '">' + titleOf(next) + ' &rarr;</a>' : '<span></span>');
   });
-  window.addEventListener('hashchange', render);
-  render();
 
   /* ---------- phone drawer ---------- */
   function openMenu() { side.classList.add('open'); backdrop.hidden = false; menu.setAttribute('aria-expanded', 'true'); }
@@ -485,8 +507,8 @@
          plus draft on a num item. value and correct: the latest checked attempt (mc, num) or the current text
          (text, correct stays null). history: one entry per option click or Check press, oldest first. Text
          answers add none.
-       state, keyed by name: finish:<lesson>, resume, session:<date>:<device> (<device> is a short random id
-         kept per browser), each an object with its own at. The page writes none of these yet.
+       state, keyed by name, each an object with its own at (see progress records below): finish:<lesson>,
+         resume, session:<date>:<device> (<device> is a short random id kept per browser).
      Every at is UTC as toISOString() writes it: YYYY-MM-DDTHH:MM:SS.sssZ. Anything else counts as oldest.
      Merge: the copy with the newer at wins the fields. A tie goes to the larger canonical JSON (sorted keys,
      no spaces, compared as UTF-16 code units), so every copy picks the same one. Answers also join their
@@ -637,6 +659,12 @@
         read: function (name) { return ask(name, null); },
         write: function (name, recs) { return ask(name, { schema: SCHEMA, records: recs }); },
         watch: null,
+        /* the goal page's own version (index.html's mtime), so a new lesson can reload the page */
+        version: function () {
+          return fetch(API + 'version', { cache: 'no-store', credentials: 'same-origin' })
+            .then(function (res) { return res.ok ? res.json() : null; })
+            .then(function (v) { return v && typeof v.version === 'string' ? v.version : null; }, function () { return null; });
+        },
         /* a refused request (a wrong token, a body too large) or a record format this page does not know */
         final: function (e) { return !!e && (e.code === 'schema' || (e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429)); }
       };
@@ -867,8 +895,10 @@
       get: function (id) { return cache.answers[id] || null; },
       put: function (r) { put('answers', r.q, r); },
       state: function (key) { return cache.state[key] || null; },
+      stateKeys: function () { return Object.keys(cache.state).sort(); },
       putState: function (key, r) { put('state', key, r); },
       waiting: function (id) { return tier !== 'local' && id in outbox.answers; },
+      version: function () { return adapter && adapter.version ? adapter.version() : Promise.resolve(null); },
       status: function () {
         return { tier: tier, detached: detached, readOk: readOk, readFailed: readFailed, sending: sending,
                  pending: Object.keys(outbox.answers).length, pendingState: Object.keys(outbox.state).length };
@@ -877,12 +907,17 @@
     };
   })();
 
+  /* the at for a new copy of a record: now, but always newer than the copy it changes */
+  function stamp(old) {
+    var now = Date.now();
+    if (old && time(old.at) >= now) now = time(old.at) + 1;
+    return new Date(now).toISOString();
+  }
+
   /* merges into the question's record, so earlier attempts survive */
   function record(q, fields, attempt) {
     var id = q.getAttribute('data-q'), old = store.get(id), k;
-    var now = Date.now();
-    if (old && time(old.at) >= now) now = time(old.at) + 1;   /* a change is always newer than what it changes */
-    var at = new Date(now).toISOString();
+    var at = stamp(old);
     var r = { lesson: q._section.id, q: id, kind: q.getAttribute('data-kind'), value: null, correct: null, attempts: 0, at: at, history: [] };
     if (old) for (k in old) if (k !== 'lesson' && k !== 'q' && k !== 'kind') r[k] = old[k];
     for (k in fields) { if (fields[k] === undefined) delete r[k]; else r[k] = fields[k]; }
@@ -893,6 +928,63 @@
     }
     r.at = at;
     store.put(r);
+    if (attempt || (typeof fields.value === 'string' && fields.value.trim())) {
+      try { noteAnswer(q); } catch (e) { if (window.console) console.error('learn: progress not recorded', e); }
+    }
+  }
+
+  /* ---------- progress records in the state collection ----------
+       finish:<lesson>  {lesson, device, at}: the learner pressed Finish lesson. The lesson waits for the tutor
+                        until the tutor sets the section's data-graded to this at or later.
+       resume           {lesson, q, device, at}: the last item answered, on any device.
+       session:<date>:<device>  {date, device, answered: [question ids], finished: [lesson ids], at}: one per
+                        day (the device's own date) and device, updated by each answer and each Finish. The
+                        streak and the return banner read these.
+     The device id lives outside the goal's keys, in learn.device, so every goal on this origin shares it. */
+  var DEVICE = null;
+  function device() {
+    if (DEVICE) return DEVICE;
+    try { DEVICE = localStorage.getItem('learn.device'); } catch (e) {}
+    if (!/^[0-9a-f]{8}$/.test(DEVICE || '')) {
+      var b = [], i, x = new Uint8Array(4);
+      if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(x);
+      else for (i = 0; i < 4; i++) x[i] = Math.floor(Math.random() * 256);
+      for (i = 0; i < 4; i++) b.push((x[i] < 16 ? '0' : '') + x[i].toString(16));
+      DEVICE = b.join('');
+      try { localStorage.setItem('learn.device', DEVICE); } catch (e) {}
+    }
+    return DEVICE;
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function today() { var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  /* merges fields into a state record; writes only when something changed, unless forced */
+  function setState(key, fields, force) {
+    var old = store.state(key), r = {}, k;
+    if (old) for (k in old) if (k !== 'at') r[k] = old[k];
+    for (k in fields) r[k] = fields[k];
+    if (!force && old) {
+      var was = {};
+      for (k in old) if (k !== 'at') was[k] = old[k];
+      if (same(was, r)) return;
+    }
+    r.at = stamp(old);
+    store.putState(key, r);
+  }
+  function list(x) { return Array.isArray(x) ? x.slice() : []; }
+  function sessionKey() { return 'session:' + today() + ':' + device(); }
+  function noteSession(field, id) {
+    var key = sessionKey(), s = store.state(key) || {}, ids = list(s[field]);
+    if (ids.indexOf(id) >= 0) return;
+    ids.push(id);
+    var f = { date: today(), device: device(), answered: list(s.answered), finished: list(s.finished) };
+    f[field] = ids;
+    setState(key, f);
+  }
+  var answeredHere = false;
+  function noteAnswer(q) {
+    answeredHere = true;
+    noteSession('answered', q.getAttribute('data-q'));
+    setState('resume', { lesson: q._section.id, q: q.getAttribute('data-q'), device: device() });
   }
 
   /* ---------- question kinds ---------- */
@@ -1113,6 +1205,127 @@
   var exportBoxes = [];
   sections.forEach(function (s) { if (s.classList.contains('lesson')) { var box = addExport(s); if (box) exportBoxes.push(box); } });
 
+  /* ---------- Finish lesson: a marker the tutor grades first on its next run ---------- */
+  function finishJSON(section) {
+    var out = JSON.parse(exportJSON(section)), keys = store.stateKeys(), i;
+    out.state = {};
+    for (i = 0; i < keys.length; i++) out.state[keys[i]] = store.state(keys[i]);
+    return JSON.stringify(out);
+  }
+  /* finished and not graded since: the marker is newer than the section's data-graded */
+  function waiting(section) {
+    var f = store.state('finish:' + section.id);
+    return !!f && time(f.at) > time(section.getAttribute('data-graded'));
+  }
+  function addFinish(section) {
+    var done = section.querySelector('.done');
+    if (!done || section.getAttribute('data-status') === 'passed') return null;
+    var box = document.createElement('div');
+    box.className = 'finish';
+    box.hidden = true;
+    box._section = section;
+    box.innerHTML = '<button class="check" type="button">Finish lesson</button><span class="note" aria-live="polite"></span>';
+    done.parentNode.insertBefore(box, done.nextSibling);
+    var note = box.querySelector('.note');
+    function show(text) {
+      var ta = box.querySelector('textarea');
+      if (!ta) { ta = document.createElement('textarea'); ta.readOnly = true; box.appendChild(ta); }
+      ta.value = text; ta.focus(); ta.select();
+      note.textContent = 'Finished. Copy this block, then paste it in the terminal with done';
+    }
+    box.querySelector('button').addEventListener('click', function () {
+      saveDrafts();   /* typing still waiting to save belongs in what is finished */
+      setState('finish:' + section.id, { lesson: section.id, device: device() }, true);
+      noteSession('finished', section.id);
+      box._pressed = true;
+      var s = store.status();
+      if (s.tier === 'local') {
+        var text = finishJSON(section);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () { note.textContent = 'Finished and copied. Paste it in the terminal with done'; }, function () { show(text); });
+        } else show(text);
+      }
+      showFinish();
+    });
+    return box;
+  }
+  var finishBoxes = [];
+  sections.forEach(function (s) { if (s.classList.contains('lesson')) { var box = addFinish(s); if (box) finishBoxes.push(box); } });
+  function showFinish() {
+    var s = store.status();
+    finishBoxes.forEach(function (box) {
+      var sec = box._section, wait = waiting(sec), strip = sec.querySelector('.strip'), tag = strip && strip.querySelector('.waiting');
+      box.hidden = s.tier === 'none';
+      if (strip && wait && !tag) { tag = document.createElement('span'); tag.className = 'waiting'; tag.textContent = 'finished, waiting for the tutor'; strip.appendChild(tag); }
+      if (tag && !wait) tag.parentNode.removeChild(tag);
+      var note = box.querySelector('.note');
+      if (s.tier === 'local') {
+        if (!box._pressed) say(note, wait ? 'Finished, not graded yet. Press it again to copy the block if the tutor has not had it' : '');
+      } else say(note, wait ? 'Finished. The tutor grades it on its next run' : '');
+    });
+  }
+
+  /* ---------- return banner: after two or more days away, how far this lesson got ---------- */
+  function dayNumber(d) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || '');
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5 : NaN;
+  }
+  function lastDay() {
+    var last = null;
+    store.stateKeys().forEach(function (k) {
+      var r = store.state(k);
+      if (k.indexOf('session:') === 0 && r && typeof r.date === 'string' && !isNaN(dayNumber(r.date)) && (!last || r.date > last)) last = r.date;
+    });
+    return last;
+  }
+  function answered(q) {
+    var d = store.get(q.getAttribute('data-q'));
+    return !!d && d.value != null && String(d.value).trim() !== '';
+  }
+  var banner = null;
+  function showBanner() {
+    if (answeredHere) return;   /* it describes the visit's start; answering here makes it old news */
+    var sec = document.getElementById(defaultId()), last = lastDay();
+    var gap = last ? dayNumber(today()) - dayNumber(last) : 0;
+    if (!sec || !sec.classList.contains('lesson') || !(gap >= 2)) { if (banner) banner.hidden = true; return; }
+    var qs = Array.prototype.slice.call(sec.querySelectorAll('.q')).filter(function (q) { return !q._broken; });
+    var done = qs.filter(answered).length, next = qs.filter(function (q) { return !answered(q); })[0];
+    var text = 'Back after ' + gap + ' days. ' + (next
+      ? done + ' of ' + qs.length + ' done here, next is ' + next.getAttribute('data-q').replace(/^.*-/, '') + '.'
+      : 'All ' + qs.length + ' done here.' + (waiting(sec) ? ' Finished, waiting for the tutor.' : ' Press Finish lesson when you are ready.'));
+    if (!banner) { banner = document.createElement('p'); banner.className = 'banner'; banner.setAttribute('role', 'status'); }
+    var strip = sec.querySelector('.strip');
+    if (banner.parentNode !== sec) sec.insertBefore(banner, strip ? strip.nextSibling : sec.firstChild);
+    banner.hidden = false;
+    say(banner, text);
+  }
+
+  /* ---------- served: a new index.html (the tutor wrote a lesson) reloads the page ---------- */
+  var fresh = null, version = null;
+  function typing() {
+    var el = document.activeElement;
+    return !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && !!el.closest('.q');
+  }
+  function reload() { saveDrafts(); location.reload(); }
+  function checkVersion() {
+    if (store.status().tier !== 'served') return;
+    store.version().then(function (v) {
+      if (!v) return;
+      if (version === null) { version = v; return; }
+      if (v === version) return;
+      if (!typing()) { reload(); return; }
+      if (!fresh) {
+        fresh = document.createElement('div');
+        fresh.className = 'fresh';
+        fresh.setAttribute('role', 'status');
+        fresh.innerHTML = '<span>New lesson ready</span><button class="check" type="button">Reload</button>';
+        fresh.querySelector('button').addEventListener('click', reload);
+        document.querySelector('main').appendChild(fresh);
+      }
+      fresh.hidden = false;
+    });
+  }
+
   /* ---------- sync line, save lines and Copy answers follow the store ---------- */
   var syncLine = document.getElementById('sync');
   function syncText(s) {
@@ -1142,8 +1355,10 @@
       box.hidden = !(settled.tier === 'local' || (settled.tier !== 'connecting' && settled.pending && box._section === cur));
     });
     questions.forEach(function (q) { if (q._status) q._status(); });
+    showFinish();
   }
   function rehydrate(name, ids) {
+    if (name === 'state') { showFinish(); showBanner(); return; }
     if (name !== 'answers') return;
     var touched = [];
     ids.forEach(function (id) {
@@ -1156,12 +1371,19 @@
   }
 
   /* ---------- hydrate from this device at once, then from the store when it answers ---------- */
+  window.addEventListener('hashchange', render);
+  render();   /* after the store, so the page can open at the resume point */
   questions.forEach(hydrate);
   sections.forEach(updateScore);
+  showBanner();
   store.start(showSync, rehydrate);
   window.addEventListener('hashchange', showSync);
   function saveDrafts() { questions.forEach(function (q) { if (q._flush) q._flush(); }); }
   window.addEventListener('pagehide', saveDrafts);
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') saveDrafts(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') saveDrafts(); else checkVersion();
+  });
+  checkVersion();
+  setInterval(checkVersion, 30000);
 })();
 </script>

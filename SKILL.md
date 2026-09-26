@@ -15,21 +15,24 @@ Wants: picture first, few words, simple terms, no mannered prose, plain dashes (
 
 ## The loop
 
-Learner: opens the page, reads the picture, does the questions, then says one word in the terminal: `done`, `stuck`, `too easy`, `too hard`, `just tell me`, or `next`. `done` comes with the answers pasted from the page's **Copy answers** button (or, on a hosted page, you read them from its database).
+Learner: opens the page, reads the picture, does the questions, presses **Finish lesson**. That writes a finish marker, so the next run finds the lesson without being told. On a page opened from disk, Finish lesson also copies a block to paste with `done`. The terminal words still work: `done` (with a block from Finish lesson or **Copy answers**, or none when the answers reach the files or a database), `stuck`, `too easy`, `too hard`, `just tell me`, `next`.
 
-You: grade, write feedback under each question, write the next lesson, update the vault note, save. The terminal is the control channel and gets one line. Everything readable goes on the page.
+You: grade finished lessons first, write feedback under each question, write the next lesson, update the vault note, save. The terminal is the control channel and gets one line. Everything readable goes on the page.
 
 ## Files
 
 ```
 ~/Learning/<goal-slug>/index.html       the goal page, one file for all the goal's topics, source of truth
-~/Learning/<goal-slug>/answers.json     answers and page state (finish markers, resume point, session log), written by the
-~/Learning/<goal-slug>/state.json       goal's server when the goal is served; absent on the local tier. Never create or edit them by hand
+~/Learning/<goal-slug>/answers.json     the goal's answers, keyed by question id
+~/Learning/<goal-slug>/state.json       page state: finish markers, resume point, session log. Both files are written only
+                                        through serve.py (the goal's server, or its merge), never by hand
+~/Learning/<goal-slug>/.write.lock      serve.py's locks; .run.lock is there only while a run grades
+~/Learning/<goal-slug>/.run.lock
 ~/Learning/<goal-slug>/sandbox/         code topics only: NN-<slug>/ with a stub to fill in and check.py (prints one line per case, ends PASS or FAIL, exit 0 or 1)
 ~/Obsidian Vault/.../<Goal>.md          the record: goal, source, lessons, misconceptions, page path
 ```
 
-Nothing else.
+Nothing else. `serve.py` is `scripts/serve.py` in this skill's folder; run it with `python3`. Each command prints one JSON line. The two JSON files exist on every tier once a pasted block has been merged: on a page opened from disk they are your record, and the page never reads them.
 
 ## Goals and topics
 
@@ -47,7 +50,18 @@ Nothing else.
 
 **Adding a topic to a goal:** same steps 1, 3 and 4 in the existing page: a new sidebar group after the last one, lessons numbered on from the goal's last lesson, its own "Where you're at" probe unless the learner just passed its prerequisite. The goal id, the earlier lessons and their answers stay as they are. Add the topic's lessons to the goal's vault note.
 
-Returning to a goal: read the vault note and the page from disk, continue from the active lesson.
+Returning to a goal: read the vault note, the page, and the goal's `answers.json` and `state.json` if they exist. Grade finished lessons first (below). With nothing to grade, continue from the active lesson: open the page (see Hosting) and say in one line how far that lesson got as answered of total ("1 of 3 answered, q2 next") and which question is next (`resume` in `state.json` names the last item answered). Never grade a lesson the learner has not finished or said `done` on. The page opens at the resume point and shows its own "back after N days" line; you add nothing for that.
+
+## Finished lessons first
+
+On every run on an existing goal, before anything the learner asked for (starting a new goal skips this):
+
+1. **Lock.** Take the goal's run lock: `python3 <this skill's folder>/scripts/serve.py lock <goal folder>`. Exit 3 means a scheduled run is grading: say so in one line and stop. Unlock (`serve.py unlock <goal folder>`) when you are done, and also when you stop early. Without Python, skip the lock.
+2. **Find them.** Each `finish:<lesson>` record in `state.json` (on a hosted page, the database's `state` collection) whose `at` is newer than that section's `data-graded`, or whose section has none, is a finished lesson waiting for you. A pasted block with `done` is one too.
+3. **Grade each** as in Grading, oldest marker first.
+4. **Clear it.** After a successful grade, set the section's `data-graded` to the marker's `at`, copied exactly (the current time in the same form when there was no marker). That is the only way a wait ends: never write a state record for it, and leave the marker where it is. A grade that fails part way leaves `data-graded` alone, so the next run tries again.
+
+**Writing the records.** Never edit `answers.json` or `state.json` by hand or rewrite them whole: a phone can write between your read and your write. Everything goes through `serve.py merge`, which merges record by record under a lock. A pasted block goes in first, before you grade: `serve.py merge <goal folder> block -` with the block on stdin. It refuses a block from another goal's page. If Python is missing, grade from the block and skip the merge.
 
 ## Lessons
 
@@ -62,12 +76,12 @@ Returning to a goal: read the vault note and the page from disk, continue from t
 
 ## Grading on "done"
 
-1. Get the lesson's answers from the pasted JSON block `{goal, lesson, answers: [{q, kind, value, correct, attempts, history}]}`. Missing block: one line, "press Copy answers at the end of the lesson and paste it here". A block whose `goal` is not the page's `data-goal` came from another page: say so in one line and grade nothing. A null `value` is a blank. `value` and `correct` are the latest attempt; `history` (`[{at, value, correct}]`, oldest first) holds every checked attempt, so read the wrong ones in order for their pattern. Ignore `draft`: a num item with only a draft is a blank.
+1. Get the lesson's answers: the records in `answers.json` (or the hosted database) whose `lesson` is the lesson's id, after merging any pasted block into them. A block is `{goal, lesson, answers: [{q, kind, value, correct, attempts, history}]}`; one from Finish lesson also carries `state`, the page's state records. On the local tier with no marker, no files and no block: one line, "press Finish lesson at the end of the lesson and paste the block here". A block whose `goal` is not the page's `data-goal` came from another page: say so in one line and grade nothing. A null `value` is a blank. `value` and `correct` are the latest attempt; `history` (`[{at, value, correct}]`, oldest first) holds every checked attempt, so read the wrong ones in order for their pattern. Ignore `draft`: a num item with only a draft is a blank.
 2. Sort each wrong or weak answer and respond that way:
    - **wrong model**: show where their answer parts from reality (a delta picture or a two-line trace) and ask one question. Do not give the fix. Log it under Misconceptions.
    - **slip**: point at the step, ask what it assumes.
    - **edge case**: hand over the failing input only.
-3. On the page: fill the `.feedback` block under each question and remove `hidden`. Quote their key line so the page stands alone. Lesson passed: set its `data-status="passed"`, write the next lesson's section with `data-status="active"`, add its rule to the cheat sheet. Not passed: leave it active, set `data-note="redo q2"`, and rewrite the lesson's `.done` line to say which answer to redo in its box and to copy again. The script draws the strip, the sidebar, and the progress bar from those attributes.
+3. On the page: fill the `.feedback` block under each question and remove `hidden`. Quote their key line so the page stands alone. Set the lesson's `data-graded` (Finished lessons first, step 4). Lesson passed: set its `data-status="passed"`, write the next lesson's section with `data-status="active"`, add its rule to the cheat sheet. Not passed: leave it active, set `data-note="redo q2"`, and rewrite the lesson's `.done` line to say which answer to redo in its box and to press Finish lesson again. The script draws the strip, the sidebar, and the progress bar from those attributes.
 4. Vault note: tick the lesson line, add any misconception. Commit.
 5. One line in the terminal.
 
@@ -83,13 +97,19 @@ Everything factual traces to the source. Unsure of a fact, formula, name, or pol
 
 ## Hosting
 
-Default: the page opens from disk (`open`, `xdg-open`, or the browser; if you cannot open it, give the path). Answers live in that browser's localStorage and reach you through **Copy answers**. Saving the file is the whole publish step; tell the learner to reload.
+Default: the page opens from disk (`open`, `xdg-open`, or the browser; if you cannot open it, give the path). Answers live in that browser's localStorage and reach you through the block that Finish lesson copies. Saving the file is the whole publish step; tell the learner to reload. A page served by `serve.py` (`#app[data-served]`) reloads itself when you save a new `index.html`.
 
 If the host has a tool that publishes an HTML file to a URL with a small shared database (Claude Code's Artifact tool), the page can sync answers between laptop and phone instead. Read `references/hosted.md` before the first publish. Pick the tier on the first publish, record it in the vault note's `page:` line, keep it for the goal.
 
 The page stays one file: inline style and script, system fonts, no external assets, and no requests except to its own origin's `api/`. Keep the template's structure; the comment at its top lists what you edit and what the script derives. An item showing "This item is broken" has bad markup (unknown `data-kind`, a missing part, a bad or repeated `data-q`, or no goal id on the page); fix it.
 
-**Records.** The page keeps two collections of keyed records, in the browser under `learn:<goal id>`: `answers`, keyed by question id (the shape in Grading), and `state`, keyed by name (`finish:<lesson>`, `resume`, `session:<date>:<device>`, where `<device>` is a short random id per browser), each record with its own `at`. Every `at` is UTC as JavaScript's `toISOString()` writes it (`2026-09-25T14:03:00.000Z`); any other form counts as oldest. Every copy merges them the same way: the newer `at` wins the fields, answer histories are joined by `at`, and nothing is deleted. When you combine two copies (a pasted block and a database), merge record by record; never replace a whole collection.
+**Records.** The page keeps two collections of keyed records, in the browser under `learn:<goal id>`: `answers`, keyed by question id (the shape in Grading), and `state`, keyed by name, each record with its own `at`:
+
+- `finish:<lesson>` `{lesson, device}`: the learner pressed Finish lesson.
+- `resume` `{lesson, q, device}`: the last item answered, on any device.
+- `session:<date>:<device>` `{date, device, answered: [question ids], finished: [lesson ids]}`: one per day and device (`<device>` is a short random id per browser, `<date>` the device's own date), updated on each answer and each Finish.
+
+ Every `at` is UTC as JavaScript's `toISOString()` writes it (`2026-09-25T14:03:00.000Z`); any other form counts as oldest. Every copy merges them the same way: the newer `at` wins the fields, answer histories are joined by `at`, and nothing is deleted. When you combine two copies (a pasted block and a database), merge record by record; never replace a whole collection.
 
 ## Vault note
 

@@ -6,11 +6,14 @@ usage:
   serve.py stop --root DIR                stop DIR's server
   serve.py run --root DIR [--port N]      serve every goal under DIR on 127.0.0.1, in the foreground
   serve.py merge GOAL answers|state FILE  merge FILE's records into GOAL/answers.json or state.json
+  serve.py merge GOAL block FILE          merge a block pasted from the page (Copy answers or Finish lesson)
+                                          into both files, after checking its goal is GOAL's page
   serve.py lock GOAL [--owner NAME]       take GOAL's run lock; exit 3 if a fresh one is held
   serve.py unlock GOAL                    drop GOAL's run lock
   serve.py new-token --root DIR           replace the token (every bookmark then needs the new link)
 
-GOAL is a goal folder; FILE is {"schema": 1, "records": {id: record}}, or "-" for stdin.
+GOAL is a goal folder; FILE is {"schema": 1, "records": {id: record}}, or "-" for stdin. A block is
+{"goal", "lesson", "answers": [record], "state": {key: record}}; "state" comes only from Finish lesson.
 Each command prints one JSON line to stdout; diagnostics go to stderr.
 
 Pages are at http://127.0.0.1:<port>/<token>/<goal-slug>/, with api/answers, api/state and api/version
@@ -633,6 +636,38 @@ def goal_dir(path):
     return goal
 
 
+GOAL_ATTR_RE = re.compile(r'<div\b[^>]*\bid="app"[^>]*>', re.S)
+
+
+def page_goal(goal):
+    """The goal id on the page's #app, or None."""
+    try:
+        with open(os.path.join(goal, "index.html"), "r", encoding="utf-8", errors="replace") as f:
+            m = GOAL_ATTR_RE.search(f.read())
+    except OSError:
+        return None
+    g = m and re.search(r'\bdata-goal="([^"]*)"', m.group(0))
+    return g.group(1) if g else None
+
+
+def merge_block(goal, doc):
+    if not isinstance(doc, dict) or not isinstance(doc.get("answers"), list):
+        return say({"ok": False, "error": "not a pasted block: no answers list"}, 2)
+    want = page_goal(goal)
+    if not want or doc.get("goal") != want:
+        return say({"ok": False, "error": "the block is for goal %r, this page is %r" % (doc.get("goal"), want)}, 2)
+    # an item never touched is exported as a placeholder (no at, no value, no history): nothing to keep
+    answers = {a["q"]: a for a in doc["answers"] if isinstance(a, dict) and isinstance(a.get("q"), str)
+               and not (a.get("at") is None and a.get("value") is None and not a.get("history") and a.get("draft") is None)}
+    state = doc.get("state") if isinstance(doc.get("state"), dict) else {}
+    try:
+        got = {"answers": merge_into(goal, "answers", answers), "state": merge_into(goal, "state", state)}
+    except StoreError as e:
+        return say({"ok": False, "error": str(e)}, 2)
+    skipped = sorted(set(answers) - set(got["answers"])) + sorted(set(state) - set(got["state"]))
+    return say({"ok": True, "answers": len(got["answers"]), "state": len(got["state"]), "skipped": skipped})
+
+
 def cmd_merge(args):
     goal = goal_dir(args.goal)
     try:
@@ -640,6 +675,8 @@ def cmd_merge(args):
         doc = json.loads(text)
     except (OSError, ValueError) as e:
         return say({"ok": False, "error": "cannot read %s: %s" % (args.file, e)}, 2)
+    if args.collection == "block":
+        return merge_block(goal, doc)
     if not isinstance(doc, dict) or doc.get("schema") != SCHEMA or not isinstance(doc.get("records"), dict):
         return say({"ok": False, "error": "%s is not {\"schema\": %d, \"records\": {...}}" % (args.file, SCHEMA)}, 2)
     try:
@@ -711,7 +748,7 @@ def main(argv=None):
     p.set_defaults(fn=cmd_run)
     p = sub.add_parser("merge")
     p.add_argument("goal")
-    p.add_argument("collection", choices=COLLECTIONS)
+    p.add_argument("collection", choices=COLLECTIONS + ("block",))
     p.add_argument("file")
     p.set_defaults(fn=cmd_merge)
     p = sub.add_parser("lock")
